@@ -41,19 +41,6 @@ npm run electron:dev
 ```
 
 ### 3. Build & Package Standalone Desktop Installers
-To build and package the native executables for your current operating system (Windows `.exe`, macOS `.app`, Linux `.deb`):
-```bash
-npm run electron:build
-```
-The compiled binaries will be outputted to the `dist_electron/` directory.
-
----
-
-## 🦀 Native Replatform Upgrade (Tauri Shell)
-
-For an ultra-lightweight, 100% native experience, the application supports **Tauri v2** as its primary desktop engine in the `feat/native-tauri` branch! 
-
-Rather than bundling Chromium, Tauri leverages the OS's native webview and compiles to a native **Rust** standalone binary of only ~3MB, consuming minimal system memory.
 
 ### Local Development (Requires Rust installed locally)
 To run Tauri in dev mode with hot reload:
