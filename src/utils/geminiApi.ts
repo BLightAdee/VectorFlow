@@ -45,15 +45,15 @@ export async function analyzeFontStyle(
   const { provider, apiKey, model } = config;
   const { mimeType, base64 } = extractBase64Data(imageSrc);
 
-  const prompt = `Analyze this handwriting or typography sample image. 
-Break down its key typographic and stylistic traits so that you can replicate any other Unicode character in this exact style.
+  const prompt = `Analyze this brand logo, wordmark, or custom graphic typography sample image. 
+Break down its key brand visual DNA, geometric rules, and typography styling motifs so that you can extend this branding style into a complete, cohesive font family.
 Provide a JSON object containing the analysis. You must output a valid JSON object matching this TypeScript structure:
 {
-  "strokeThickness": "thin" | "medium" | "thick" | "bold",
-  "serifType": "sans-serif" | "slab-serif" | "serif" | "cursive" | "handwriting" | "calligraphy",
+  "strokeThickness": "thin" | "medium" | "thick" | "bold" | "black",
+  "serifType": "sans-serif" | "slab-serif" | "serif" | "display" | "geometric" | "decorative" | "script" | "futuristic" | "stencil",
   "slant": "vertical" | "slanted-right" | "slanted-left",
-  "roundness": "highly-circular" | "squarish" | "condensed" | "elongated" | "normal",
-  "description": "2-3 sentences explaining unique styling details (e.g. geometric quirks, terminal finishes, crossbar heights)"
+  "roundness": "sharp-corners" | "chamfered" | "circular" | "organic" | "blocky" | "elliptical" | "normal",
+  "description": "2-3 sentences explaining unique graphic design features (e.g., stroke contrast ratios, decorative terminal finishes, inline/stencil cuts, branding geometric motifs)"
 }
 Return ONLY the raw JSON object. Do not wrap it in markdown code blocks.`;
 
@@ -155,21 +155,21 @@ export async function generateGlyphBatch(
   const { provider, apiKey, model } = config;
   const { mimeType, base64 } = extractBase64Data(imageSrc);
 
-  const prompt = `You are a professional type designer and master vector font developer.
+  const prompt = `You are an elite vector graphic designer and master type designer specializing in brand identity.
 Your task is to generate beautiful, highly precise, and recognizable SVG outlines for each of the requested characters.
-These vector characters must perfectly replicate the visual traits of the user's reference drawings (in the image) and match the provided Style Report.
+These vector characters must perfectly extend the visual identity, styling rules, and geometric DNA of the brand logo letters (in the image and exact vector paths) and match the provided Style Report.
 
 STYLE REPORT:
 - Stroke Thickness: ${styleReport.strokeThickness}
 - Serif Type: ${styleReport.serifType}
 - Slant: ${styleReport.slant}
 - Roundness: ${styleReport.roundness}
-- Key Style Description: ${styleReport.description}
+- Brand Style Description: ${styleReport.description}
 
-USER'S EXACT TRACED VECTOR PATHS (USE AS PRIMARY STYLE TEMPLATE):
+USER'S EXACT TRACED VECTOR LOGO PATHS (USE AS THE MANDATORY BRAND STYLE ANCHORS):
 ${Object.entries(tracedPaths).map(([char, path]) => `
 Character '${char}':
-- Traced Vector Outline Path: "${path}"
+- Mapped Logo Vector Path: "${path}"
 `).join('\n')}
 
 REQUESTED CHARACTERS (WITH SKELETON OUTLINES):
@@ -179,11 +179,11 @@ Character '${c.char}' (Unicode decimal: ${c.code}):
 - Recommended Advance Width: ${c.standardWidth || 600}
 `).join('\n')}
 
-CRITICAL VECTOR OUTLINE RULES (MUST FOLLOW TO PREVENT WEIRD/UNRECOGNIZABLE GLYPHS):
+CRITICAL BRANDING VECTOR OUTLINE RULES:
 
 1. DO NOT DRAW SINGLE-STROKE PATHS:
-   - TrueType fonts compile paths as filled regions, not stroked lines! A single stroke line like "M 500 200 L 500 800" has zero thickness and will collapse to an invisible glitch.
-   - EVERY line, stem, crossbar, or curve must be drawn as a closed double-walled boundary shape.
+   - Fonts compile paths as filled shapes, not stroked lines! A single stroke line like "M 500 200 L 500 800" will collapse to an invisible glitch.
+   - EVERY stem, crossbar, curve, or terminal must be drawn as a closed double-walled boundary shape.
    - Example (Straight Stem): A simple vertical bar 'I' of width 60 must be drawn as a closed rectangle:
      "M 470 200 L 530 200 L 530 800 L 470 800 Z" (This creates a solid 60-pixel thick bar).
 
@@ -196,10 +196,11 @@ CRITICAL VECTOR OUTLINE RULES (MUST FOLLOW TO PREVENT WEIRD/UNRECOGNIZABLE GLYPH
      Inner hole (Counter-Clockwise, top-left-bottom-right): "M 500 260 C 365 260 260 365 260 500 C 260 635 365 740 500 740 C 635 740 740 635 740 500 C 740 365 635 260 500 260 Z"
      Combined Path (drawn as a single string separated by M): Outer CW path immediately followed by Inner CCW path. This guarantees a perfectly hollow center!
 
-3. USE SMOOTH BEZIER CURVES:
-   - For curved sections (e.g., the round bowls of 'C', 'S', 'G', 'U', lowercase 'a', 'e', 'g', 'o'), use 'C' (cubic bezier) and 'Q' (quadratic bezier) commands with correct control points to draw organic, fluid, and elegant outlines. Do NOT use blocky straight lines to approximate curves!
+3. USE SMOOTH BEZIER CURVES & BRAND IDENTITY DETAILS:
+   - For curved sections (e.g. 'C', 'S', 'G', 'U', lowercase 'a', 'e', 'g', 'o'), use 'C' (cubic bezier) and 'Q' (quadratic bezier) commands with correct control points to draw organic, fluid, and elegant outlines. Do NOT use blocky straight lines to approximate curves!
+   - Closely match the logo anchors' design: replicate their specific terminal flares, diagonal cuts, serifs, corners (sharp, beveled, or rounded), inline cuts, or decorative motifs!
 
-4. VIEWPORT & ALIGNMENT GUIDELINES:
+4. VIEWPORT & TYPOGRAPHIC GUIDELINES:
    - Grid Coordinates: Draw all paths within a 1000x1000 pixel viewport.
    - X-Axis: 0 (left) to 1000 (right). Center the character horizontally inside this boundary.
    - Y-Axis: 0 (topmost) to 1000 (bottommost).
@@ -208,11 +209,10 @@ CRITICAL VECTOR OUTLINE RULES (MUST FOLLOW TO PREVENT WEIRD/UNRECOGNIZABLE GLYPH
    - X-Height: Y = 450. The top of standard lowercase letters rests near Y = 450.
    - Descenders: Y = 950. Lowercase descenders ('g', 'p', 'y') extend downwards to near Y = 950.
 
-5. TEMPLATE-BASED STYLIZATION & MORPHING MANDATE (IMPORTANT FOR PERFECT ANATOMY):
-   - For each character, you are provided with an anatomically correct, balanced, and pre-spaced "Standard Template Outline Path".
-   - Your primary job is to **morph, skew, and reshape** this standard outline path to match the visual traits of the user's drawings (in the reference image) and the Style Report!
-   - DO NOT discard the template's topological skeleton. Reshape it! Adjust coordinates of its bezier curves and lines: skew points to apply slant, broaden/narrow lines to match stroke thickness, add serifs or rounded corners, or make curves more organic/cursive to mirror the user's pen style.
-   - By using the template skeleton as your base, the letters are guaranteed to be **100% recognizable** and **typographically flawless** while beautifully adopting the user's custom handwriting style!
+5. SKELETON OUTLINE MORPHING MANDATE:
+   - For each character, you are provided with a pre-spaced "Standard Template Outline Path".
+   - Your job is to **morph, skew, thicken, and reshape** this template's coordinates so it adopts the exact visual DNA, terminal treatments, and geometry of the logo letters!
+   - By using the template skeleton as your base, the letters are guaranteed to be 100% recognizable and typographically flawless, while perfectly matching the brand logo's visual style.
 
 You must output a valid JSON array of objects. No additional explanation or markdown wraps are allowed.
 JSON Output Structure:

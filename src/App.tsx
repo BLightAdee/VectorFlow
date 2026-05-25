@@ -2,10 +2,12 @@ import { useState, useEffect } from 'react';
 import * as opentype from 'opentype.js';
 import { ApiKeyModal } from './components/ApiKeyModal';
 import { DrawingCanvas } from './components/DrawingCanvas';
+import { SegmentMapper } from './components/SegmentMapper';
 import { UnicodeSelector } from './components/UnicodeSelector';
 import { GlyphGrid } from './components/GlyphGrid';
 import { FontSandbox } from './components/FontSandbox';
 import { getCharactersForBlocks } from './utils/unicodeBlocks';
+import { estimateGlyphWidth } from './utils/svgParser';
 import {
   analyzeFontStyle,
   generateGlyphBatch,
@@ -48,6 +50,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'input' | 'matrix' | 'sandbox'>('input');
   const [templateFont, setTemplateFont] = useState<opentype.Font | null>(null);
   const [loadingTemplate, setLoadingTemplate] = useState(false);
+  const [uploadedRawImage, setUploadedRawImage] = useState<string | null>(null);
 
   // 3. Grid state & outputs
   const [generatedGlyphs, setGeneratedGlyphs] = useState<Record<number, GeneratedGlyph>>({});
@@ -100,25 +103,31 @@ export default function App() {
       return;
     }
 
+    // If traced is empty, they uploaded a raw image sheet! Send them to SegmentMapper!
+    if (Object.keys(traced).length === 0) {
+      setUploadedRawImage(stitchedImage);
+      return;
+    }
+
+    setUploadedRawImage(null); // Reset segment mapper
     setCompositeImage(stitchedImage);
     setTracedPaths(traced);
     setAnalyzingStyle(true);
     setGlobalError('');
     setStyleReport(null);
 
-    // Direct Injection: Automatically vectorize and inject the user's exact handdrawn reference letters
-    // directly into the matrix, guaranteeing a 100% perfect shape match for what they sketched!
+    // Direct Injection: Automatically vectorize and inject the user's exact reference letters
+    // directly into the matrix, guaranteeing a 100% perfect shape match!
     setGeneratedGlyphs(prev => {
       const next = { ...prev };
-      const mappings: Record<string, number> = { A: 65, g: 103, '5': 53, R: 82, e: 101 };
       Object.entries(traced).forEach(([char, path]) => {
-        const code = mappings[char];
-        if (code && path) {
+        const code = char.charCodeAt(0);
+        if (path) {
           next[code] = {
             char,
             code,
             path,
-            width: 700 // Balanced default width
+            width: estimateGlyphWidth(path)
           };
         }
       });
@@ -293,8 +302,10 @@ export default function App() {
   };
 
   const handleResetWorkspace = () => {
-    if (confirm('Are you sure you want to reset your workspace? This will erase all drawn samples and synthesized characters.')) {
+    if (confirm('Are you sure you want to reset your workspace? This will erase all drawn/uploaded samples and synthesized characters.')) {
       setCompositeImage(null);
+      setTracedPaths({});
+      setUploadedRawImage(null);
       setStyleReport(null);
       setGeneratedGlyphs({});
       setFailedCodes([]);
@@ -522,7 +533,13 @@ export default function App() {
           {/* TAB CONTENT: STEP 1: INPUT SAMPLES DRAWING CANVAS */}
           {activeTab === 'input' && !analyzingStyle && (
             <>
-              {!compositeImage ? (
+              {uploadedRawImage ? (
+                <SegmentMapper
+                  uploadedImage={uploadedRawImage}
+                  onComplete={handleStyleStitched}
+                  onReset={() => setUploadedRawImage(null)}
+                />
+              ) : !compositeImage ? (
                 <DrawingCanvas onComplete={handleStyleStitched} />
               ) : (
                 <div className="glass-panel p-8 flex flex-col items-center justify-center text-center gap-6 border-indigo-500/10 bg-indigo-500/2">

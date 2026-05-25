@@ -1,0 +1,22 @@
+# Tasks
+
+- `[ ]` Implement Typography-Aware Coordinate Normalization in `SegmentMapper.tsx`
+  - `[ ]` Write helper to classify character anatomic target guidelines (Cap-height, X-height, Baseline, Descender)
+  - `[ ]` Scan canvas to detect exact bounding box of ink inside crops
+  - `[ ]` Compute translation and uniform scaling to map ink onto target guidelines in 1000x1000 viewport
+- `[ ]` Redesign Interactive Slicer & Mapping UI in `SegmentMapper.tsx` & `imageSegmenter.ts`
+  - `[ ]` Add sliders in UI for **Binarization Contrast** and **Slicing Sensitivity** (merge threshold)
+  - `[ ]` Re-run image component slicing instantly on slider adjustments
+  - `[ ]` Render all cropped segments in a grid with custom character input fields below each crop
+  - `[ ]` Create Auto-Map Sequence input (default `abcdefghijklmnopqrstuvwxyz`) and Auto-Map sequential assignment helper
+  - `[ ]` Trace each mapped segment on a 1000x1000 normalized canvas using `imagetracerjs`
+- `[ ]` Update AI Logo Style Analyzer and Batch Vector Prompts in `geminiApi.ts`
+  - `[ ]` Refine style report schema and prompt to focus on branding DNA, geometry, stroke contrast, terminals, and decorative motifs
+  - `[ ]` Rework vector generation prompt to emphasize morphing Roboto templates using the mapped logo letters as direct design anchors
+- `[ ]` Adapt Dynamic Mapped Injection and AI Style Reference Pipeline in `App.tsx`
+  - `[ ]` Inject *all* user-mapped characters dynamically using their ASCII/Unicode decimal char codes into `generatedGlyphs`
+  - `[ ]` Pass the complete list of user-mapped characters and their normalized vector paths to `geminiApi.ts` as AI style references
+- `[ ]` Verify Font Assembly & Sandbox Alignments with Logo Samples
+  - `[ ]` Upload a brand logo image sheet, run Connective Slicer, tune merge threshold slider
+  - `[ ]` Map characters, verify they are scaled and centered perfectly in the Glyphs Grid Inspector
+  - `[ ]` Compile TTF font and test alignments, spacing, and baseline in Sandbox
