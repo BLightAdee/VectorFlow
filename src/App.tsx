@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import * as opentype from 'opentype.js';
 import { ApiKeyModal } from './components/ApiKeyModal';
 import { DrawingCanvas } from './components/DrawingCanvas';
 import { UnicodeSelector } from './components/UnicodeSelector';
@@ -44,6 +45,8 @@ export default function App() {
   const [analyzingStyle, setAnalyzingStyle] = useState(false);
   const [synthesisActive, setSynthesisActive] = useState(false);
   const [activeTab, setActiveTab] = useState<'input' | 'matrix' | 'sandbox'>('input');
+  const [templateFont, setTemplateFont] = useState<opentype.Font | null>(null);
+  const [loadingTemplate, setLoadingTemplate] = useState(false);
 
   // 3. Grid state & outputs
   const [generatedGlyphs, setGeneratedGlyphs] = useState<Record<number, GeneratedGlyph>>({});
@@ -64,6 +67,25 @@ export default function App() {
       // Prompt modal if credentials are missing
       setKeyModalOpen(true);
     }
+  }, []);
+
+  // Load local template font (Roboto-Regular.woff) on mount
+  useEffect(() => {
+    const fetchTemplateFont = async () => {
+      setLoadingTemplate(true);
+      try {
+        const response = await fetch('/template-font.woff');
+        const buffer = await response.arrayBuffer();
+        const font = opentype.parse(buffer);
+        setTemplateFont(font);
+      } catch (err) {
+        console.error('Failed to load local template font skeleton system:', err);
+      } finally {
+        setLoadingTemplate(false);
+      }
+    };
+
+    fetchTemplateFont();
   }, []);
 
   // Get active selected list of characters from blocks
@@ -123,9 +145,38 @@ export default function App() {
       setGeneratingCodes(prev => [...prev, ...batchCodes]);
       setProgressMsg(`Synthesizing batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(totalCount / batchSize)}...`);
 
+      // Extract template outline skeleton and spacing dynamically for the batch!
+      const currentBatchWithTemplates = currentBatch.map(c => {
+        let standardPath = '';
+        let standardWidth = 600;
+        
+        if (templateFont) {
+          try {
+            const glyph = templateFont.charToGlyph(c.char);
+            const scale = 1000 / templateFont.unitsPerEm;
+            const glyphWidth = glyph.advanceWidth ?? 500;
+            const scaledWidth = glyphWidth * scale;
+            
+            // Center the glyph inside 1000px box
+            const xOffset = Math.max(0, (1000 - scaledWidth) / 2);
+            
+            standardPath = glyph.getPath(xOffset, 800, 1000).toPathData(2);
+            standardWidth = Math.ceil(scaledWidth);
+          } catch (err) {
+            console.warn(`Failed to extract Roboto template path for '${c.char}':`, err);
+          }
+        }
+        
+        return {
+          ...c,
+          standardPath,
+          standardWidth
+        };
+      });
+
       try {
         const glyphs = await generateGlyphBatch(
-          currentBatch,
+          currentBatchWithTemplates,
           compositeImage,
           styleReport,
           apiConfig
@@ -165,9 +216,26 @@ export default function App() {
     setGeneratingCodes(prev => [...prev, code]);
     setFailedCodes(prev => prev.filter(c => c !== code));
 
+    // Extract template outline skeleton and spacing dynamically
+    let standardPath = '';
+    let standardWidth = 600;
+    if (templateFont) {
+      try {
+        const glyph = templateFont.charToGlyph(charMeta.char);
+        const scale = 1000 / templateFont.unitsPerEm;
+        const glyphWidth = glyph.advanceWidth ?? 500;
+        const scaledWidth = glyphWidth * scale;
+        const xOffset = Math.max(0, (1000 - scaledWidth) / 2);
+        standardPath = glyph.getPath(xOffset, 800, 1000).toPathData(2);
+        standardWidth = Math.ceil(scaledWidth);
+      } catch (err) {
+        console.warn(`Failed to extract Roboto template path for '${charMeta.char}':`, err);
+      }
+    }
+
     try {
       const glyphs = await generateGlyphBatch(
-        [charMeta],
+        [{ ...charMeta, standardPath, standardWidth }],
         compositeImage,
         styleReport,
         apiConfig
@@ -277,6 +345,18 @@ export default function App() {
                 <span>Current Stage:</span>
                 <span className="font-bold text-white uppercase tracking-wider text-[10px] bg-white/5 px-2 py-0.5 rounded">
                   {!compositeImage ? '1. Style Input' : styleReport ? '3. Generation' : '2. Analyzing Style'}
+                </span>
+              </div>
+
+              {/* Template system status */}
+              <div className="flex items-center justify-between text-xs text-slate-400 border-t border-white/5 pt-2.5">
+                <span>Skeleton Engine:</span>
+                <span className={`font-mono text-[9px] font-semibold px-2 py-0.5 rounded uppercase tracking-wider ${
+                  templateFont 
+                    ? 'bg-teal-500/10 text-teal-400 border border-teal-500/20' 
+                    : 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 animate-pulse'
+                }`}>
+                  {loadingTemplate ? 'loading...' : templateFont ? 'Roboto Active' : 'offline'}
                 </span>
               </div>
               

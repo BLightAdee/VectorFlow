@@ -146,7 +146,7 @@ Return ONLY the raw JSON object. Do not wrap it in markdown code blocks.`;
  * Generates vector glyphs for a batch of characters based on the reference style.
  */
 export async function generateGlyphBatch(
-  characters: { char: string; code: number }[],
+  characters: { char: string; code: number; standardPath?: string; standardWidth?: number }[],
   imageSrc: string,
   styleReport: StyleReport,
   config: ApiConfig
@@ -165,8 +165,12 @@ STYLE REPORT:
 - Roundness: ${styleReport.roundness}
 - Key Style Description: ${styleReport.description}
 
-REQUESTED CHARACTERS:
-${characters.map(c => `Character '${c.char}' (Unicode decimal: ${c.code})`).join('\n')}
+REQUESTED CHARACTERS (WITH SKELETON OUTLINES):
+${characters.map(c => `
+Character '${c.char}' (Unicode decimal: ${c.code}):
+- Standard Template Outline Path: "${c.standardPath || 'N/A'}"
+- Recommended Advance Width: ${c.standardWidth || 600}
+`).join('\n')}
 
 CRITICAL VECTOR OUTLINE RULES (MUST FOLLOW TO PREVENT WEIRD/UNRECOGNIZABLE GLYPHS):
 
@@ -196,6 +200,12 @@ CRITICAL VECTOR OUTLINE RULES (MUST FOLLOW TO PREVENT WEIRD/UNRECOGNIZABLE GLYPH
    - Cap Height: Y = 200. The top of uppercase letters sits exactly on Y = 200.
    - X-Height: Y = 450. The top of standard lowercase letters rests near Y = 450.
    - Descenders: Y = 950. Lowercase descenders ('g', 'p', 'y') extend downwards to near Y = 950.
+
+5. TEMPLATE-BASED STYLIZATION & MORPHING MANDATE (IMPORTANT FOR PERFECT ANATOMY):
+   - For each character, you are provided with an anatomically correct, balanced, and pre-spaced "Standard Template Outline Path".
+   - Your primary job is to **morph, skew, and reshape** this standard outline path to match the visual traits of the user's drawings (in the reference image) and the Style Report!
+   - DO NOT discard the template's topological skeleton. Reshape it! Adjust coordinates of its bezier curves and lines: skew points to apply slant, broaden/narrow lines to match stroke thickness, add serifs or rounded corners, or make curves more organic/cursive to mirror the user's pen style.
+   - By using the template skeleton as your base, the letters are guaranteed to be **100% recognizable** and **typographically flawless** while beautifully adopting the user's custom handwriting style!
 
 You must output a valid JSON array of objects. No additional explanation or markdown wraps are allowed.
 JSON Output Structure:
