@@ -149,7 +149,8 @@ export async function generateGlyphBatch(
   characters: { char: string; code: number; standardPath?: string; standardWidth?: number }[],
   imageSrc: string,
   styleReport: StyleReport,
-  config: ApiConfig
+  config: ApiConfig,
+  tracedPaths: Record<string, string>
 ): Promise<GeneratedGlyph[]> {
   const { provider, apiKey, model } = config;
   const { mimeType, base64 } = extractBase64Data(imageSrc);
@@ -164,6 +165,12 @@ STYLE REPORT:
 - Slant: ${styleReport.slant}
 - Roundness: ${styleReport.roundness}
 - Key Style Description: ${styleReport.description}
+
+USER'S EXACT TRACED VECTOR PATHS (USE AS PRIMARY STYLE TEMPLATE):
+${Object.entries(tracedPaths).map(([char, path]) => `
+Character '${char}':
+- Traced Vector Outline Path: "${path}"
+`).join('\n')}
 
 REQUESTED CHARACTERS (WITH SKELETON OUTLINES):
 ${characters.map(c => `

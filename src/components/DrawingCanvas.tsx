@@ -1,8 +1,10 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { Undo, Trash2, Sliders, Type, Upload, ArrowRight, Palette, Image as ImageIcon } from 'lucide-react';
+// @ts-ignore
+import ImageTracer from 'imagetracerjs';
 
 interface DrawingCanvasProps {
-  onComplete: (compositeImage: string) => void;
+  onComplete: (compositeImage: string, tracedPaths: Record<string, string>) => void;
 }
 
 const SAMPLE_GLYPHS = [
@@ -206,12 +208,61 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ onComplete }) => {
   // Check if all drawings are completed
   const isAllDrawingsDone = drawings.every(d => d !== '');
 
+  // Vectorize and trace user drawings using pure JS ImageTracer
+  const traceDrawings = async (): Promise<Record<string, string>> => {
+    const traced: Record<string, string> = {};
+    
+    const traceSingle = (dataUrl: string): Promise<string> => {
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const tempCanvas = document.createElement('canvas');
+          tempCanvas.width = 400;
+          tempCanvas.height = 400;
+          const tempCtx = tempCanvas.getContext('2d');
+          if (!tempCtx) {
+            resolve('');
+            return;
+          }
+          
+          tempCtx.drawImage(img, 0, 0);
+          
+          try {
+            // @ts-ignore
+            const svgString = ImageTracer.canvasToSVG(tempCanvas, {
+              ltres: 1,
+              qtres: 1,
+              colorsampling: 0,
+              numberofcolors: 2,
+              minarea: 4
+            });
+            const match = svgString.match(/d="([^"]+)"/);
+            resolve(match ? match[1] : '');
+          } catch (e) {
+            console.error('Canvas tracing failed:', e);
+            resolve('');
+          }
+        };
+        img.src = dataUrl;
+      });
+    };
+
+    for (let i = 0; i < SAMPLE_GLYPHS.length; i++) {
+      const char = SAMPLE_GLYPHS[i].char;
+      if (drawings[i]) {
+        traced[char] = await traceSingle(drawings[i]);
+      }
+    }
+    
+    return traced;
+  };
+
   // Handle Submit drawn sheet
-  const submitDrawnSamples = () => {
-    // Generate a single composite image compiling all 5 drawings in a beautiful grid sheet!
-    // Grid structure: 3 columns, 2 rows (leaving 6th slot empty or as decoration)
-    // Box dimensions: 400 x 400
-    // Total size: 1200 x 800
+  const submitDrawnSamples = async () => {
+    // 1. Vectorize reference drawings
+    const tracedPaths = await traceDrawings();
+
+    // 2. Generate a single composite image compiling all 5 drawings in a beautiful grid sheet
     const compositeCanvas = document.createElement('canvas');
     compositeCanvas.width = 1200;
     compositeCanvas.height = 800;
@@ -226,7 +277,7 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ onComplete }) => {
     const checkAndComplete = () => {
       loadedCount++;
       if (loadedCount === SAMPLE_GLYPHS.length) {
-        onComplete(compositeCanvas.toDataURL('image/png'));
+        onComplete(compositeCanvas.toDataURL('image/png'), tracedPaths);
       }
     };
 
@@ -242,7 +293,7 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ onComplete }) => {
         // Draw drawing onto composite canvas
         cCtx.drawImage(img, x, y, 400, 400);
 
-        // Draw dynamic grid lines & text labels for AI context (makes style extractions very accurate!)
+        // Draw dynamic grid lines & text labels for AI context
         cCtx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
         cCtx.lineWidth = 2;
         cCtx.strokeRect(x, y, 400, 400);
@@ -273,7 +324,7 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ onComplete }) => {
 
   const submitUploadedSamples = () => {
     if (uploadedImage) {
-      onComplete(uploadedImage);
+      onComplete(uploadedImage, {});
     }
   };
 

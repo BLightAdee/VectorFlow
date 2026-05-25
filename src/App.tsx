@@ -41,6 +41,7 @@ export default function App() {
     'basic-latin-digits',
   ]);
   const [compositeImage, setCompositeImage] = useState<string | null>(null);
+  const [tracedPaths, setTracedPaths] = useState<Record<string, string>>({});
   const [styleReport, setStyleReport] = useState<StyleReport | null>(null);
   const [analyzingStyle, setAnalyzingStyle] = useState(false);
   const [synthesisActive, setSynthesisActive] = useState(false);
@@ -92,7 +93,7 @@ export default function App() {
   const targetCharacters = getCharactersForBlocks(selectedBlockIds);
 
   // Orchestrate style analysis
-  const handleStyleStitched = async (stitchedImage: string) => {
+  const handleStyleStitched = async (stitchedImage: string, traced: Record<string, string>) => {
     if (!apiConfig) {
       setGlobalError('Please configure your AI API Key first in the settings.');
       setKeyModalOpen(true);
@@ -100,9 +101,29 @@ export default function App() {
     }
 
     setCompositeImage(stitchedImage);
+    setTracedPaths(traced);
     setAnalyzingStyle(true);
     setGlobalError('');
     setStyleReport(null);
+
+    // Direct Injection: Automatically vectorize and inject the user's exact handdrawn reference letters
+    // directly into the matrix, guaranteeing a 100% perfect shape match for what they sketched!
+    setGeneratedGlyphs(prev => {
+      const next = { ...prev };
+      const mappings: Record<string, number> = { A: 65, g: 103, '5': 53, R: 82, e: 101 };
+      Object.entries(traced).forEach(([char, path]) => {
+        const code = mappings[char];
+        if (code && path) {
+          next[code] = {
+            char,
+            code,
+            path,
+            width: 700 // Balanced default width
+          };
+        }
+      });
+      return next;
+    });
 
     try {
       const report = await analyzeFontStyle(stitchedImage, apiConfig);
@@ -179,7 +200,8 @@ export default function App() {
           currentBatchWithTemplates,
           compositeImage,
           styleReport,
-          apiConfig
+          apiConfig,
+          tracedPaths
         );
 
         // Save successfully synthesized glyphs to state
@@ -238,7 +260,8 @@ export default function App() {
         [{ ...charMeta, standardPath, standardWidth }],
         compositeImage,
         styleReport,
-        apiConfig
+        apiConfig,
+        tracedPaths
       );
 
       if (glyphs.length > 0) {
