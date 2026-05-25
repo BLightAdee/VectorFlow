@@ -1,6 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { extractImageSegments } from '../utils/imageSegmenter';
-import type { ImageSegment } from '../utils/imageSegmenter';
 // @ts-ignore
 import ImageTracer from 'imagetracerjs';
 import { 
@@ -11,8 +9,10 @@ import {
   Check, 
   RefreshCw,
   Sliders,
-  X,
-  Droplet
+  Droplet,
+  Trash2,
+  Maximize2,
+  Info
 } from 'lucide-react';
 
 interface SegmentMapperProps {
@@ -21,69 +21,151 @@ interface SegmentMapperProps {
   onReset: () => void;
 }
 
+interface CropArea {
+  id: string;
+  x: number; // Rendered coordinate space x
+  y: number; // Rendered coordinate space y
+  w: number;
+  h: number;
+  char: string; // Mapped character
+}
+
 export const SegmentMapper: React.FC<SegmentMapperProps> = ({
   uploadedImage,
   onComplete,
   onReset,
 }) => {
-  // Slicing control states
+  // Binarization & Eyedropper state
   const [binarizeThreshold, setBinarizeThreshold] = useState(127);
-  const [mergeThreshold, setMergeThreshold] = useState(15); // Default lower for logos
-  
-  // Eyedropper / Color sampling state
   const [sampledColor, setSampledColor] = useState<{ r: number; g: number; b: number } | null>(null);
   const [colorTolerance, setColorTolerance] = useState(45);
   
-  const [segments, setSegments] = useState<ImageSegment[]>([]);
   const [loading, setLoading] = useState(false);
-  const [mappings, setMappings] = useState<Record<string, string>>({}); // Maps character to segment id (e.g. { 'a': 'segment-0' })
-  const [autoMapSeq, setAutoMapSeq] = useState('abcdefghijklmnopqrstuvwxyz');
   const [error, setError] = useState('');
+  
+  // Interactive Custom Bounding Box Cutout state
+  const [cropAreas, setCropAreas] = useState<CropArea[]>([]);
+  const [activeAreaId, setActiveAreaId] = useState<string | null>(null);
+  const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
+  const [dragAction, setDragAction] = useState<'create' | 'move' | null>(null);
+  const [currentBox, setCurrentBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
 
-  // Scissors / Split Modal state
-  const [splittingSegment, setSplittingSegment] = useState<ImageSegment | null>(null);
-  const [brushSize, setBrushSize] = useState(8);
+  // Mapped characters tracking
+  const [activeCharInput, setActiveCharInput] = useState('');
+  const [autoMapSeq, setAutoMapSeq] = useState('abcdefghijklmnopqrstuvwxyz');
 
-  const mainImageRef = useRef<HTMLImageElement>(null);
-  const modalCanvasRef = useRef<HTMLCanvasElement>(null);
-  const isDrawingRef = useRef(false);
+  const handleClearColorFilter = () => {
+    setSampledColor(null);
+  };
 
-  // Extract segments when uploaded image, binarize/merge sliders or color sampling parameters change
+  const imageContainerRef = useRef<HTMLDivElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
+  const canvasOverlayRef = useRef<HTMLCanvasElement>(null);
+
+  // Initialize canvas overlay sizing matching image aspect ratio
   useEffect(() => {
-    const analyzeImage = async () => {
-      setLoading(true);
-      setError('');
-      try {
-        const extracted = await extractImageSegments(
-          uploadedImage, 
-          12, // minSize
-          15, // padding
-          mergeThreshold, 
-          binarizeThreshold,
-          sampledColor || undefined,
-          colorTolerance
-        );
-        setSegments(extracted);
-        if (extracted.length === 0) {
-          setError('No distinct character segments were detected. Try clicking on a letter in the logo preview below to sample its color, or adjust binarize sliders.');
-        }
-      } catch (err: any) {
-        console.error(err);
-        setError('Failed to process image segmentation. Ensure the file is a valid PNG or JPG.');
-      } finally {
-        setLoading(false);
+    const handleResize = () => {
+      const img = imageRef.current;
+      const canvas = canvasOverlayRef.current;
+      if (!img || !canvas) return;
+
+      canvas.width = img.clientWidth;
+      canvas.height = img.clientHeight;
+      drawOverlay();
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [cropAreas, activeAreaId, currentBox]);
+
+  // Redraw the canvas cropper overlay containing crop rectangles and glowing indicators
+  const drawOverlay = () => {
+    const canvas = canvasOverlayRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // 1. Draw a semi-transparent dark shade outside any active crop rectangles
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Helper to clear crop boxes to show logo clearly underneath
+    const clearBox = (x: number, y: number, w: number, h: number) => {
+      ctx.save();
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.rect(x, y, w, h);
+      ctx.fill();
+      ctx.restore();
+    };
+
+    // Clear current dragging box
+    if (currentBox) {
+      clearBox(currentBox.x, currentBox.y, currentBox.w, currentBox.h);
+    }
+
+    // Clear all completed crop areas
+    cropAreas.forEach((area) => {
+      clearBox(area.x, area.y, area.w, area.h);
+    });
+
+    // 2. Draw borders & glowing labels
+    const drawBoxDecorations = (x: number, y: number, w: number, h: number, isActive: boolean, label: string) => {
+      ctx.strokeStyle = isActive ? '#14b8a6' : '#6366f1';
+      ctx.lineWidth = isActive ? 2.5 : 1.5;
+      ctx.setLineDash(isActive ? [] : [4, 4]);
+      
+      // Draw rectangular border
+      ctx.strokeRect(x, y, w, h);
+      
+      // Draw corner grips
+      ctx.fillStyle = isActive ? '#14b8a6' : '#6366f1';
+      const gripSize = 5;
+      ctx.fillRect(x - 2, y - 2, gripSize, gripSize);
+      ctx.fillRect(x + w - 2, y - 2, gripSize, gripSize);
+      ctx.fillRect(x - 2, y + h - 2, gripSize, gripSize);
+      ctx.fillRect(x + w - 2, y + h - 2, gripSize, gripSize);
+
+      // Draw character label bubble above crop box
+      if (label) {
+        ctx.setLineDash([]);
+        ctx.fillStyle = isActive ? 'rgba(20, 184, 166, 0.9)' : 'rgba(99, 102, 241, 0.85)';
+        ctx.font = 'bold 11px sans-serif';
+        const textWidth = ctx.measureText(` '${label}' `).width;
+        
+        ctx.beginPath();
+        ctx.roundRect(x + 4, y - 18, textWidth + 8, 15, 4);
+        ctx.fill();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(` '${label}'`, x + 8, y - 6);
       }
     };
 
-    analyzeImage();
-  }, [uploadedImage, binarizeThreshold, mergeThreshold, sampledColor, colorTolerance]);
+    // Draw active drawing box
+    if (currentBox) {
+      drawBoxDecorations(currentBox.x, currentBox.y, currentBox.w, currentBox.h, true, 'Draft');
+    }
 
-  // Handle Logo Eyedropper Color sampling
-  const handleLogoClick = (e: React.MouseEvent<HTMLImageElement>) => {
-    const img = mainImageRef.current;
+    // Draw all saved crop areas
+    cropAreas.forEach((area) => {
+      drawBoxDecorations(area.x, area.y, area.w, area.h, area.id === activeAreaId, area.char);
+    });
+  };
+
+  // Re-draw overlay whenever drag properties change
+  useEffect(() => {
+    drawOverlay();
+  }, [cropAreas, activeAreaId, currentBox]);
+
+  // Color Sampler (Eyedropper) click handler
+  const handleLogoColorSample = (e: React.MouseEvent<HTMLImageElement>) => {
+    const img = imageRef.current;
     if (!img) return;
 
-    // Draw image onto temporary canvas to sample pixel color
     const canvas = document.createElement('canvas');
     canvas.width = img.naturalWidth;
     canvas.height = img.naturalHeight;
@@ -92,238 +174,378 @@ export const SegmentMapper: React.FC<SegmentMapperProps> = ({
 
     ctx.drawImage(img, 0, 0);
 
-    // Get click coordinates relative to rendered image dimensions
     const rect = img.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * img.naturalWidth;
     const y = ((e.clientY - rect.top) / rect.height) * img.naturalHeight;
 
     try {
       const pixel = ctx.getImageData(Math.floor(x), Math.floor(y), 1, 1).data;
-      const r = pixel[0];
-      const g = pixel[1];
-      const b = pixel[2];
-      
-      setSampledColor({ r, g, b });
+      setSampledColor({ r: pixel[0], g: pixel[1], b: pixel[2] });
       setError('');
     } catch (err) {
-      console.warn('Could not sample color from pixel coordinates:', err);
+      console.warn('Could not extract pixel color metrics:', err);
     }
   };
 
-  const handleClearColorFilter = () => {
-    setSampledColor(null);
+  // Mouse Interactions inside Custom Cropper
+  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasOverlayRef.current;
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    // Check if clicked inside an existing crop box (to select/move)
+    const clickedArea = [...cropAreas].reverse().find(area => 
+      x >= area.x && x <= area.x + area.w &&
+      y >= area.y && y <= area.y + area.h
+    );
+
+    if (clickedArea) {
+      setActiveAreaId(clickedArea.id);
+      setActiveCharInput(clickedArea.char);
+      setDragStart({ x: x - clickedArea.x, y: y - clickedArea.y }); // Store offset inside box
+      setDragAction('move');
+    } else {
+      // Draw a new bounding box
+      setActiveAreaId(null);
+      setActiveCharInput('');
+      setDragStart({ x, y });
+      setDragAction('create');
+    }
   };
 
-  // Handle assigning a segment to a character
-  const handleMap = (char: string, segmentId: string) => {
-    if (!char) return;
-    
-    setMappings(prev => {
-      const next = { ...prev };
-      
-      // Clean up previous mapping for this exact character
-      delete next[char];
+  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!dragStart || !dragAction) return;
 
-      // Remove this segment from any other character mapping to preserve 1-to-1
-      if (segmentId !== 'unmapped') {
-        Object.entries(next).forEach(([c, sId]) => {
-          if (sId === segmentId) {
-            delete next[c];
-          }
-        });
-        next[char] = segmentId;
+    const canvas = canvasOverlayRef.current;
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = Math.max(0, Math.min(canvas.width, e.clientX - rect.left));
+    const y = Math.max(0, Math.min(canvas.height, e.clientY - rect.top));
+
+    if (dragAction === 'create') {
+      const boxX = Math.min(dragStart.x, x);
+      const boxY = Math.min(dragStart.y, y);
+      const boxW = Math.abs(dragStart.x - x);
+      const boxH = Math.abs(dragStart.y - y);
+
+      if (boxW > 5 && boxH > 5) {
+        setCurrentBox({ x: boxX, y: boxY, w: boxW, h: boxH });
       }
-      
-      return next;
-    });
-  };
-
-  // Sequential Auto-Mapper
-  const handleAutoMap = () => {
-    const chars = autoMapSeq.split('').filter(c => c.trim());
-    const next: Record<string, string> = {};
-    const count = Math.min(segments.length, chars.length);
-    
-    for (let i = 0; i < count; i++) {
-      next[chars[i]] = segments[i].id;
-    }
-    setMappings(next);
-  };
-
-  const handleClearMappings = () => {
-    setMappings({});
-  };
-
-  // We require at least 1 mapped letter to finalize, but recommend mapping as many as possible
-  const mappedCharsCount = Object.keys(mappings).length;
-  const isFinalizable = mappedCharsCount > 0;
-
-  // Typography-Aware Coordinate Normalization Tracing
-  const normalizeAndTraceSegment = (segment: ImageSegment, char: string): Promise<string> => {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        // Create scanner canvas to detect exact ink bounds
-        const scanCanvas = document.createElement('canvas');
-        scanCanvas.width = img.width;
-        scanCanvas.height = img.height;
-        const scanCtx = scanCanvas.getContext('2d');
-        if (!scanCtx) {
-          resolve('');
-          return;
-        }
-        scanCtx.drawImage(img, 0, 0);
-
-        const imgData = scanCtx.getImageData(0, 0, img.width, img.height);
-        const pixels = imgData.data;
-        let minX = img.width;
-        let maxX = 0;
-        let minY = img.height;
-        let maxY = 0;
-        let hasInk = false;
-
-        // Scan pixels for white ink
-        for (let y = 0; y < img.height; y++) {
-          for (let x = 0; x < img.width; x++) {
-            const idx = (y * img.width + x) * 4;
-            const r = pixels[idx];
-            const g = pixels[idx+1];
-            const b = pixels[idx+2];
-            const bright = (r + g + b) / 3;
-            
-            if (bright > 100) { // Ink pixel (white on black)
-              if (x < minX) minX = x;
-              if (x > maxX) maxX = x;
-              if (y < minY) minY = y;
-              if (y > maxY) maxY = y;
-              hasInk = true;
-            }
-          }
-        }
-
-        const inkX = hasInk ? minX : 0;
-        const inkY = hasInk ? minY : 0;
-        const inkW = hasInk ? (maxX - minX + 1) : img.width;
-        const inkH = hasInk ? (maxY - minY + 1) : img.height;
-
-        // Classify guidelines for this character
-        const ascenders = 'bdfhktl';
-        const descenders = 'gjpqy';
-        const standardLowercase = 'acenorsuvwxz';
+    } else if (dragAction === 'move' && activeAreaId) {
+      setCropAreas(prev => prev.map(area => {
+        if (area.id !== activeAreaId) return area;
         
-        let targetTopY = 200;   // Default (Cap-height)
-        let targetBottomY = 800; // Default (Baseline)
-
-        if (char >= 'A' && char <= 'Z') {
-          targetTopY = 200;
-          targetBottomY = 800;
-        } else if (char >= '0' && char <= '9') {
-          targetTopY = 200;
-          targetBottomY = 800;
-        } else if (ascenders.includes(char)) {
-          targetTopY = 200;
-          targetBottomY = 800;
-        } else if (descenders.includes(char)) {
-          targetTopY = 450;
-          targetBottomY = 950;
-        } else if (standardLowercase.includes(char)) {
-          targetTopY = 450;
-          targetBottomY = 800;
-        }
-
-        const targetH = targetBottomY - targetTopY;
-
-        // Compute scaling factor and keep aspect ratio
-        const scale = targetH / inkH;
-        const scaledW = inkW * scale;
-
-        // Center the character horizontally inside the 1000px box
-        const targetX = Math.max(50, (1000 - scaledW) / 2);
-
-        // Render mapped character onto 1000x1000 normalized canvas
-        const canvas = document.createElement('canvas');
-        canvas.width = 1000;
-        canvas.height = 1000;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.fillStyle = '#0f0f12'; // Solid dark gray bg
-          ctx.fillRect(0, 0, 1000, 1000);
-
-          ctx.drawImage(
-            img,
-            inkX, inkY, inkW, inkH, // Source bounds
-            targetX, targetTopY, scaledW, targetH // Destination bounds
-          );
-
-          try {
-            // @ts-ignore
-            const svgString = ImageTracer.canvasToSVG(canvas, {
-              ltres: 1,
-              qtres: 1,
-              colorsampling: 0,
-              numberofcolors: 2,
-              minarea: 4
-            });
-            const match = svgString.match(/d="([^"]+)"/);
-            resolve(match ? match[1] : '');
-          } catch (e) {
-            console.error('Vectorizing segment failed:', e);
-            resolve('');
-          }
-        } else {
-          resolve('');
-        }
-      };
-      img.src = segment.dataUrl;
-    });
+        // Calculate new X/Y based on mouse drag offset, constrained inside canvas boundaries
+        const newX = Math.max(0, Math.min(canvas.width - area.w, x - dragStart.x));
+        const newY = Math.max(0, Math.min(canvas.height - area.h, y - dragStart.y));
+        return { ...area, x: newX, y: newY };
+      }));
+    }
   };
 
-  // Vectorize and submit mapped glyphs
+  const handleMouseUp = () => {
+    if (dragAction === 'create' && currentBox) {
+      // Add new crop area
+      const newId = `crop-${Date.now()}`;
+      const newArea: CropArea = {
+        id: newId,
+        x: currentBox.x,
+        y: currentBox.y,
+        w: currentBox.w,
+        h: currentBox.h,
+        char: '', // Unassigned initially
+      };
+      
+      setCropAreas(prev => [...prev, newArea]);
+      setActiveAreaId(newId);
+      setActiveCharInput('');
+      setCurrentBox(null);
+    }
+    
+    setDragStart(null);
+    setDragAction(null);
+  };
+
+  // Helper to map active crop selection to a key
+  const handleSaveMapping = (char: string) => {
+    if (!activeAreaId) return;
+    const cleanChar = char.trim().charAt(0);
+    
+    setCropAreas(prev => prev.map(area => {
+      if (area.id !== activeAreaId) return area;
+      return { ...area, char: cleanChar };
+    }));
+    
+    setActiveCharInput(cleanChar);
+  };
+
+  // Remove a crop selection
+  const handleDeleteArea = (id: string) => {
+    setCropAreas(prev => prev.filter(area => area.id !== id));
+    if (activeAreaId === id) {
+      setActiveAreaId(null);
+      setActiveCharInput('');
+    }
+  };
+
+  // Auto-Map sequential alphabet onto current crops (ordered left-to-right)
+  const handleAutoMapCrops = () => {
+    const chars = autoMapSeq.split('').filter((c: string) => c.trim());
+    
+    // Sort crop areas left-to-right (horizontal sequence)
+    const sortedCrops = [...cropAreas].sort((a, b) => {
+      const yDiff = Math.abs(a.y - b.y);
+      if (yDiff > 60) return a.y - b.y; // Sort by row first
+      return a.x - b.x;
+    });
+
+    const count = Math.min(sortedCrops.length, chars.length);
+    setCropAreas(prev => prev.map(area => {
+      const idx = sortedCrops.findIndex(c => c.id === area.id);
+      if (idx !== -1 && idx < count) {
+        return { ...area, char: chars[idx] };
+      }
+      return area;
+    }));
+  };
+
+  // Trigger high-res canvas cropping, binarization, typography-normalization, and tracing
   const handleFinalize = async () => {
-    if (!isFinalizable) return;
+    const img = imageRef.current;
+    if (!img || cropAreas.length === 0) return;
 
     setLoading(true);
     try {
       const tracedPaths: Record<string, string> = {};
 
-      // 1. Vectorize and normalize each mapped character
-      for (const [char, segmentId] of Object.entries(mappings)) {
-        const segment = segments.find(s => s.id === segmentId);
-        if (!segment) continue;
+      const renderedW = img.clientWidth;
+      const renderedH = img.clientHeight;
+      const scaleX = img.naturalWidth / renderedW;
+      const scaleY = img.naturalHeight / renderedH;
 
-        const pathData = await normalizeAndTraceSegment(segment, char);
-        if (pathData) {
-          tracedPaths[char] = pathData;
+      // Filter and only vectorize fully mapped crops
+      const mappedCrops = cropAreas.filter(c => c.char);
+
+      for (const area of mappedCrops) {
+        // Translate rendered coords back to natural high-res coordinates
+        const origX = Math.max(0, Math.floor(area.x * scaleX));
+        const origY = Math.max(0, Math.floor(area.y * scaleY));
+        const origW = Math.min(img.naturalWidth - origX, Math.ceil(area.w * scaleX));
+        const origH = Math.min(img.naturalHeight - origY, Math.ceil(area.h * scaleY));
+
+        if (origW < 8 || origH < 8) continue;
+
+        // Perform high-res crop on temporary canvas
+        const cropCanvas = document.createElement('canvas');
+        cropCanvas.width = origW;
+        cropCanvas.height = origH;
+        const cropCtx = cropCanvas.getContext('2d');
+        
+        if (cropCtx) {
+          // 1. Draw raw high-res crop
+          cropCtx.drawImage(img, origX, origY, origW, origH, 0, 0, origW, origH);
+          
+          // 2. Perform color-tolerance or default-contrast binarization
+          const cropImgData = cropCtx.getImageData(0, 0, origW, origH);
+          const cropPixels = cropImgData.data;
+          
+          for (let i = 0; i < cropPixels.length; i += 4) {
+            const r = cropPixels[i];
+            const g = cropPixels[i+1];
+            const b = cropPixels[i+2];
+            
+            if (sampledColor) {
+              const dist = Math.sqrt(
+                Math.pow(r - sampledColor.r, 2) +
+                Math.pow(g - sampledColor.g, 2) +
+                Math.pow(b - sampledColor.b, 2)
+              );
+              if (dist < colorTolerance) {
+                // Ink matches sampled letter color
+                cropPixels[i] = 255;
+                cropPixels[i+1] = 255;
+                cropPixels[i+2] = 255;
+              } else {
+                // Background
+                cropPixels[i] = 15;
+                cropPixels[i+1] = 15;
+                cropPixels[i+2] = 18;
+              }
+            } else {
+              const bright = (r + g + b) / 3;
+              // Guess background: border pixels are typically light/paper
+              if (bright < binarizeThreshold) {
+                // Dark ink -> white on black
+                cropPixels[i] = 255;
+                cropPixels[i+1] = 255;
+                cropPixels[i+2] = 255;
+              } else {
+                cropPixels[i] = 15;
+                cropPixels[i+1] = 15;
+                cropPixels[i+2] = 18;
+              }
+            }
+          }
+          cropCtx.putImageData(cropImgData, 0, 0);
+
+          // 3. Scan binarized canvas for exact ink bounding bounds
+          const binarizedImg = new Image();
+          await new Promise<void>((resolveImg) => {
+            binarizedImg.onload = () => resolveImg();
+            binarizedImg.src = cropCanvas.toDataURL('image/png');
+          });
+
+          // Scan coordinates for exact ink bounds
+          let minX = origW;
+          let maxX = 0;
+          let minY = origH;
+          let maxY = 0;
+          let hasInk = false;
+
+          const scanImgData = cropCtx.getImageData(0, 0, origW, origH);
+          const scanPixels = scanImgData.data;
+
+          for (let y = 0; y < origH; y++) {
+            for (let x = 0; x < origW; x++) {
+              const idx = (y * origW + x) * 4;
+              if (scanPixels[idx] > 127) { // Ink pixel
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+                hasInk = true;
+              }
+            }
+          }
+
+          const inkX = hasInk ? minX : 0;
+          const inkY = hasInk ? minY : 0;
+          const inkW = hasInk ? (maxX - minX + 1) : origW;
+          const inkH = hasInk ? (maxY - minY + 1) : origH;
+
+          // 4. Classify character guidelines
+          const ascenders = 'bdfhktl';
+          const descenders = 'gjpqy';
+          const standardLowercase = 'acenorsuvwxz';
+          
+          let targetTopY = 200;
+          let targetBottomY = 800;
+
+          const char = area.char;
+
+          if (char >= 'A' && char <= 'Z') {
+            targetTopY = 200;
+            targetBottomY = 800;
+          } else if (char >= '0' && char <= '9') {
+            targetTopY = 200;
+            targetBottomY = 800;
+          } else if (ascenders.includes(char)) {
+            targetTopY = 200;
+            targetBottomY = 800;
+          } else if (descenders.includes(char)) {
+            targetTopY = 450;
+            targetBottomY = 950;
+          } else if (standardLowercase.includes(char)) {
+            targetTopY = 450;
+            targetBottomY = 800;
+          }
+
+          const targetH = targetBottomY - targetTopY;
+
+          // Uniform scale preservation
+          const scale = targetH / inkH;
+          const scaledW = inkW * scale;
+
+          // Center horizontally in 1000px viewport
+          const targetX = Math.max(50, (1000 - scaledW) / 2);
+
+          // 5. Draw transformed character onto 1000x1000 canvas and trace
+          const traceCanvas = document.createElement('canvas');
+          traceCanvas.width = 1000;
+          traceCanvas.height = 1000;
+          const tCtx = traceCanvas.getContext('2d');
+          
+          if (tCtx) {
+            tCtx.fillStyle = '#0f0f12';
+            tCtx.fillRect(0, 0, 1000, 1000);
+
+            tCtx.drawImage(
+              binarizedImg,
+              inkX, inkY, inkW, inkH, // Source rectangle
+              targetX, targetTopY, scaledW, targetH // Destination bounds
+            );
+
+            try {
+              // @ts-ignore
+              const svgString = ImageTracer.canvasToSVG(traceCanvas, {
+                ltres: 1,
+                qtres: 1,
+                colorsampling: 0,
+                numberofcolors: 2,
+                minarea: 4
+              });
+              const match = svgString.match(/d="([^"]+)"/);
+              if (match && match[1]) {
+                tracedPaths[char] = match[1];
+              }
+            } catch (e) {
+              console.error(`Vectorizing segment failed for char '${char}':`, e);
+            }
+          }
         }
       }
 
-      // 2. Generate a single 1200x800 composite canvas containing up to 6 mapped logo letters for AI analysis
+      // 6. Generate 1200x800 composite canvas containing up to 6 crops for AIDNA reporting
       const compositeCanvas = document.createElement('canvas');
       compositeCanvas.width = 1200;
       compositeCanvas.height = 800;
       const cCtx = compositeCanvas.getContext('2d');
-      
+
       if (cCtx) {
         cCtx.fillStyle = '#0f0f12';
         cCtx.fillRect(0, 0, 1200, 800);
 
-        // Sort mapped characters alphabetically to make it highly structured
-        const sortedMapped = Object.keys(mappings).sort();
-        const firstSix = sortedMapped.slice(0, 6);
+        const activeCrops = cropAreas.filter(c => c.char).slice(0, 6);
+        
+        const loadedCrops = await Promise.all(
+          activeCrops.map(crop => {
+            return new Promise<{ char: string; dataUrl: string }>((resolve) => {
+              // Crop segment again dynamically
+              const cX = Math.max(0, Math.floor(crop.x * scaleX));
+              const cY = Math.max(0, Math.floor(crop.y * scaleY));
+              const cW = Math.min(img.naturalWidth - cX, Math.ceil(crop.w * scaleX));
+              const cH = Math.min(img.naturalHeight - cY, Math.ceil(crop.h * scaleY));
+
+              const tempCanvas = document.createElement('canvas');
+              tempCanvas.width = cW;
+              tempCanvas.height = cH;
+              const tempCtx = tempCanvas.getContext('2d');
+              
+              if (tempCtx) {
+                tempCtx.drawImage(img, cX, cY, cW, cH, 0, 0, cW, cH);
+                resolve({ char: crop.char, dataUrl: tempCanvas.toDataURL() });
+              } else {
+                resolve({ char: crop.char, dataUrl: '' });
+              }
+            });
+          })
+        );
 
         const loadedImages = await Promise.all(
-          firstSix.map(char => {
+          loadedCrops.map(c => {
             return new Promise<{ char: string; img: HTMLImageElement | null }>((resolve) => {
-              const segmentId = mappings[char];
-              const segment = segments.find(s => s.id === segmentId);
-              if (!segment) {
-                resolve({ char, img: null });
+              if (!c.dataUrl) {
+                resolve({ char: c.char, img: null });
                 return;
               }
-              const img = new Image();
-              img.onload = () => resolve({ char, img });
-              img.onerror = () => resolve({ char, img: null });
-              img.src = segment.dataUrl;
+              const tempImg = new Image();
+              tempImg.onload = () => resolve({ char: c.char, img: tempImg });
+              tempImg.onerror = () => resolve({ char: c.char, img: null });
+              tempImg.src = c.dataUrl;
             });
           })
         );
@@ -335,7 +557,6 @@ export const SegmentMapper: React.FC<SegmentMapperProps> = ({
           const x = col * 400;
           const y = row * 400;
 
-          // Draw cropped segment centered in the grid block
           cCtx.drawImage(item.img, x + 50, y + 50, 300, 300);
 
           cCtx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
@@ -351,158 +572,41 @@ export const SegmentMapper: React.FC<SegmentMapperProps> = ({
       }
     } catch (err) {
       console.error(err);
-      setError('Failed to vectorize your logo shapes. Please adjust threshold and try again.');
+      setError('Failed to trace your customized crop boxes. Please try re-selecting boundaries.');
     } finally {
       setLoading(false);
     }
   };
 
-  // --- INTERACTIVE PIXEL SCISSORS EDITOR LOGIC ---
+  // Adjust canvas dimensions when image finishes loading
+  const handleImageLoaded = () => {
+    const img = imageRef.current;
+    const canvas = canvasOverlayRef.current;
+    if (!img || !canvas) return;
 
-  const openSplitModal = (segment: ImageSegment) => {
-    setSplittingSegment(segment);
+    canvas.width = img.clientWidth;
+    canvas.height = img.clientHeight;
+    drawOverlay();
   };
 
-  useEffect(() => {
-    if (!splittingSegment) return;
-    // Set up canvas when opening split modal
-    const canvas = modalCanvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const img = new Image();
-    img.onload = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      // Draw background
-      ctx.fillStyle = '#0f0f12';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      // Draw the cropped segment centered with margins
-      const scale = Math.min((canvas.width * 0.85) / img.width, (canvas.height * 0.85) / img.height);
-      const w = img.width * scale;
-      const h = img.height * scale;
-      const x = (canvas.width - w) / 2;
-      const y = (canvas.height - h) / 2;
-
-      ctx.drawImage(img, x, y, w, h);
-    };
-    img.src = splittingSegment.dataUrl;
-  }, [splittingSegment]);
-
-  const startScissorsDraw = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = modalCanvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    isDrawingRef.current = true;
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = '#0f0f12'; // Paints the background color to erase/cut connections!
-    ctx.lineWidth = brushSize;
-  };
-
-  const drawScissorsCut = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDrawingRef.current) return;
-    const canvas = modalCanvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    ctx.lineTo(x, y);
-    ctx.stroke();
-  };
-
-  const stopScissorsDraw = () => {
-    isDrawingRef.current = false;
-  };
-
-  const handleApplySplit = async () => {
-    const canvas = modalCanvasRef.current;
-    if (!canvas || !splittingSegment) return;
-
-    setLoading(true);
-    try {
-      const editedDataUrl = canvas.toDataURL('image/png');
-
-      // Re-run component slicer on the edited local canvas
-      // Since it's a local edit, binarization is solid black & white, so we use mergeThreshold=2, customThreshold=100
-      const subSegments = await extractImageSegments(
-        editedDataUrl,
-        8, // minSize
-        5, // padding
-        2, // mergeThreshold (very low to prevent re-merging)
-        100 // contrast threshold
-      );
-
-      if (subSegments.length > 1) {
-        // Successfully split! Replace the old segment with the newly sliced sub-segments
-        setSegments(prev => {
-          const idx = prev.findIndex(s => s.id === splittingSegment.id);
-          if (idx === -1) return prev;
-
-          const updated = [...prev];
-          // Assign unique IDs to sub-segments
-          const formattedSubSegments = subSegments.map((s, sIdx) => ({
-            ...s,
-            id: `subsegment-${splittingSegment.id}-${sIdx}`,
-            // Map coordinates back roughly
-            x: splittingSegment.x + s.x,
-            y: splittingSegment.y + s.y
-          }));
-
-          updated.splice(idx, 1, ...formattedSubSegments);
-          return updated;
-        });
-
-        // Clear mappings for the old split character
-        setMappings(prev => {
-          const next = { ...prev };
-          Object.entries(next).forEach(([c, sId]) => {
-            if (sId === splittingSegment.id) {
-              delete next[c];
-            }
-          });
-          return next;
-        });
-
-        setSplittingSegment(null);
-      } else {
-        alert('Could not find any independent separated blobs. Make sure you draw a complete cut line in black across the connecting letters!');
-      }
-    } catch (e) {
-      console.error(e);
-      alert('Failed to split letters. Try drawing thinner or clearer cut lines.');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const selectedArea = cropAreas.find(c => c.id === activeAreaId);
+  const mappedCropsCount = cropAreas.filter(c => c.char).length;
+  const isFinalizable = mappedCropsCount > 0;
 
   return (
     <div className="glass-panel w-full flex flex-col overflow-hidden">
       {/* Header bar */}
       <div className="p-5 border-b border-white/5 bg-white/2 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
+          <div className="p-2.5 rounded-lg bg-teal-500/10 border border-teal-500/20 text-teal-400">
             <Scissors size={20} className="animate-pulse" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="text-md font-bold text-slate-200">Branding Extraction Console</h3>
-              <span className="logo-badge px-2 py-0.5 text-[9px] bg-teal-500/10 text-teal-400 border border-teal-500/25">EYEDROPPER & SCISSORS ACTIVE</span>
+              <h3 className="text-md font-bold text-slate-200">Manual Branding Cutout Studio</h3>
+              <span className="logo-badge px-2 py-0.5 text-[9px] bg-indigo-500/10 text-indigo-400 border border-indigo-500/25 font-bold">Manual Bounding-Box</span>
             </div>
-            <p className="text-xs text-slate-400">Sample logo colors to isolate letters, and use Scissors to split touching/script characters</p>
+            <p className="text-xs text-slate-400">Drag rectangles directly over the logo below to cut out and assign letters manually</p>
           </div>
         </div>
 
@@ -514,114 +618,103 @@ export const SegmentMapper: React.FC<SegmentMapperProps> = ({
         </button>
       </div>
 
-      {/* Uploaded Logo Image Preview panel with interactive Color Eyedropper */}
-      <div className="p-4 bg-black/60 border-b border-white/5 flex flex-col md:flex-row gap-5 items-center justify-between">
-        <div className="flex flex-col gap-2 flex-1 w-full">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+      {/* Slicing Controls & Color Sampler Dashboard */}
+      <div className="p-4 bg-black/60 border-b border-white/5 grid grid-cols-1 lg:grid-cols-3 gap-5 items-center">
+        {/* Eyedropper / Color Sampler display */}
+        <div className="flex flex-col gap-1.5 col-span-1">
+          <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+            <span className="flex items-center gap-1.5">
               <Droplet size={12} className="text-teal-400" />
-              <span>Color Filter Sampler (Click logo below to sample letter ink)</span>
+              <span>Eyedropper Ink Filter</span>
             </span>
             {sampledColor && (
-              <button
+              <button 
                 onClick={handleClearColorFilter}
-                className="text-[9px] text-rose-400 hover:text-rose-300 font-bold border border-rose-500/20 bg-rose-500/5 px-2 py-0.5 rounded"
+                className="text-[8px] text-rose-400 hover:text-rose-300 font-bold border border-rose-500/20 bg-rose-500/5 px-1.5 py-0.5 rounded transition-all"
               >
-                Clear Color Filter
+                Reset Filter
               </button>
             )}
           </div>
-          
-          <div className="relative rounded-xl border border-white/5 overflow-hidden max-h-[160px] bg-black/40 flex items-center justify-center p-2 group shadow-inner">
-            <img
-              ref={mainImageRef}
-              src={uploadedImage}
-              alt="Logo Eyedropper pad"
-              onClick={handleLogoClick}
-              className="max-h-[140px] max-w-full object-contain cursor-crosshair rounded border border-white/5 hover:border-indigo-500/35 transition-all"
-              title="Click on the logo letter color to isolate it!"
-            />
-            {sampledColor && (
-              <div 
-                className="absolute top-3 right-3 flex items-center gap-1.5 bg-black/85 border border-white/10 px-2 py-1 rounded-lg text-[9px] font-mono text-slate-300 shadow-lg"
-              >
-                <span>Ink Color:</span>
+          <div className="flex items-center gap-2 bg-[#0c0c0f] border border-white/5 rounded-lg p-2 min-h-[38px] text-[10px] text-slate-400">
+            {sampledColor ? (
+              <>
+                <span>Active Target Color:</span>
                 <div 
-                  className="w-3.5 h-3.5 rounded-full border border-white/20 shadow-inner"
+                  className="w-4 h-4 rounded-full border border-white/20 shadow-inner"
                   style={{ backgroundColor: `rgb(${sampledColor.r}, ${sampledColor.g}, ${sampledColor.b})` }}
                 />
-              </div>
+                <span className="font-mono text-slate-500 font-semibold">rgb({sampledColor.r},{sampledColor.g},{sampledColor.b})</span>
+              </>
+            ) : (
+              <span className="italic text-slate-500 flex items-center gap-1">
+                <Info size={11} />
+                Click directly on letters inside the logo preview below to sample ink color
+              </span>
             )}
           </div>
         </div>
 
-        {/* Dynamic Slicing Adjustments Panel */}
-        <div className="grid grid-cols-1 gap-4 w-full md:w-80 shrink-0">
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex justify-between">
-              {sampledColor ? (
-                <>
-                  <span>Color Matching Tolerance ({colorTolerance})</span>
-                  <span className="text-[9px] text-teal-400 lowercase font-mono">Tweak width of matched color</span>
-                </>
-              ) : (
-                <>
-                  <span>Binarization Contrast ({binarizeThreshold})</span>
-                  <span className="text-[9px] text-slate-600 lowercase font-mono">Tweak if shapes are fading</span>
-                </>
-              )}
-            </label>
-            <div className="flex items-center gap-3">
-              {sampledColor ? (
-                <input
-                  type="range"
-                  min="15"
-                  max="130"
-                  value={colorTolerance}
-                  onChange={(e) => setColorTolerance(parseInt(e.target.value))}
-                  className="flex-1 accent-teal-400 cursor-ew-resize h-1 bg-white/10 rounded-lg appearance-none"
-                />
-              ) : (
-                <input
-                  type="range"
-                  min="40"
-                  max="220"
-                  value={binarizeThreshold}
-                  onChange={(e) => setBinarizeThreshold(parseInt(e.target.value))}
-                  className="flex-1 accent-teal-400 cursor-ew-resize h-1 bg-white/10 rounded-lg appearance-none"
-                />
-              )}
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex justify-between">
-              <span>Slicing Sensitivity ({mergeThreshold}px)</span>
-              <span className="text-[9px] text-slate-600 lowercase font-mono">Keep low to split overlapping graphics</span>
-            </label>
-            <div className="flex items-center gap-3">
+        {/* Dynamic Tolerance or Contrast Slider */}
+        <div className="flex flex-col gap-1 col-span-1 w-full">
+          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex justify-between">
+            {sampledColor ? (
+              <>
+                <span>Color Tolerance ({colorTolerance})</span>
+                <span className="text-[9px] text-teal-400 font-mono">Tweak width of matched color</span>
+              </>
+            ) : (
+              <>
+                <span>Binarization Contrast Threshold ({binarizeThreshold})</span>
+                <span className="text-[9px] text-slate-600 font-mono">Tweak if letter shapes fade</span>
+              </>
+            )}
+          </label>
+          <div className="flex items-center mt-1">
+            {sampledColor ? (
               <input
                 type="range"
-                min="2"
-                max="60"
-                value={mergeThreshold}
-                onChange={(e) => setMergeThreshold(parseInt(e.target.value))}
-                className="flex-1 accent-teal-400 cursor-ew-resize h-1 bg-white/10 rounded-lg appearance-none"
+                min="15"
+                max="135"
+                value={colorTolerance}
+                onChange={(e) => setColorTolerance(parseInt(e.target.value))}
+                className="w-full accent-teal-400 cursor-ew-resize h-1 bg-white/10 rounded-lg appearance-none"
               />
-            </div>
+            ) : (
+              <input
+                type="range"
+                min="40"
+                max="220"
+                value={binarizeThreshold}
+                onChange={(e) => setBinarizeThreshold(parseInt(e.target.value))}
+                className="w-full accent-teal-400 cursor-ew-resize h-1 bg-white/10 rounded-lg appearance-none"
+              />
+            )}
+          </div>
+        </div>
+
+        {/* Global information statistics */}
+        <div className="flex flex-col gap-1.5 col-span-1 border-t lg:border-t-0 lg:border-l border-white/5 pt-3.5 lg:pt-0 lg:pl-5 text-xs text-slate-400">
+          <div className="flex justify-between items-center">
+            <span>Cutout Rectangles:</span>
+            <span className="font-mono text-slate-200 font-bold bg-white/5 px-2 py-0.5 rounded">{cropAreas.length} Drawn</span>
+          </div>
+          <div className="flex justify-between items-center mt-1">
+            <span>Successfully Mapped:</span>
+            <span className="font-mono text-teal-400 font-bold bg-teal-500/5 px-2 py-0.5 rounded border border-teal-500/10">{mappedCropsCount} Anchors</span>
           </div>
         </div>
       </div>
 
-      {loading && segments.length === 0 ? (
-        <div className="p-16 flex flex-col items-center justify-center text-center gap-4 min-h-[300px]">
+      {loading ? (
+        <div className="p-16 flex flex-col items-center justify-center text-center gap-4 min-h-[350px]">
           <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/25 flex items-center justify-center text-indigo-400 pulse-glow">
             <RefreshCw className="animate-spin" size={24} />
           </div>
           <div>
-            <h4 className="text-sm font-bold text-indigo-300">Slicing Brand Elements...</h4>
+            <h4 className="text-sm font-bold text-indigo-300">Extracting Logo Vectors...</h4>
             <p className="text-xs text-slate-500 mt-1 max-w-sm">
-              Applying contrast thresholds, isolating graphic shapes, and sorting boundaries.
+              Vectorizing bounding crop rectangles, applying typography guidelines, and exporting SVG contours.
             </p>
           </div>
         </div>
@@ -631,7 +724,7 @@ export const SegmentMapper: React.FC<SegmentMapperProps> = ({
             <ShieldAlert size={28} />
           </div>
           <div className="max-w-md">
-            <h4 className="text-sm font-bold text-slate-200">Processing Blocked</h4>
+            <h4 className="text-sm font-bold text-slate-200">Tracing Blocked</h4>
             <p className="text-xs text-slate-400 leading-relaxed mt-2">{error}</p>
           </div>
           <button onClick={onReset} className="btn-primary py-2 px-5 text-xs mt-2">
@@ -639,234 +732,167 @@ export const SegmentMapper: React.FC<SegmentMapperProps> = ({
           </button>
         </div>
       ) : (
-        <div className="p-5 flex flex-col gap-6">
-          {/* Mapping Wizard Panel */}
-          <div className="glass-panel p-4 bg-indigo-500/2 border-indigo-500/10 flex flex-col gap-3">
-            <div className="flex items-center justify-between border-b border-white/5 pb-2">
+        <div className="p-5 grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* LEFT/CENTER: INTERACTIVE CROP BOARD (Large Canvas Area) */}
+          <div className="lg:col-span-2 flex flex-col gap-3">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+              <Maximize2 size={12} className="text-indigo-400" />
+              <span>Interactive Logo Canvas (Click and drag box over letters)</span>
+            </span>
+
+            <div 
+              ref={imageContainerRef}
+              className="relative w-full border border-white/10 rounded-2xl overflow-hidden bg-black/60 shadow-2xl flex items-center justify-center"
+              style={{ minHeight: '350px' }}
+            >
+              <img
+                ref={imageRef}
+                src={uploadedImage}
+                alt="Main logo cropper board"
+                onLoad={handleImageLoaded}
+                onClick={handleLogoColorSample}
+                className="w-full max-h-[500px] object-contain rounded-xl select-none pointer-events-none"
+              />
+
+              <canvas
+                ref={canvasOverlayRef}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                className="absolute top-0 left-0 w-full h-full cursor-crosshair z-20"
+              />
+            </div>
+
+            <p className="text-[10px] text-slate-500 italic text-center">
+              💡 Tips: Drag empty spaces to draw a box around any letter. Drag inside existing boxes to move them.
+            </p>
+          </div>
+
+          {/* RIGHT: MAP SIDEBAR (Dashboard console) */}
+          <div className="flex flex-col gap-4">
+            {/* Save/Edit active selection panel */}
+            <div className="glass-panel p-4 bg-indigo-500/2 border-indigo-500/10 flex flex-col gap-3.5">
               <div className="flex items-center gap-1.5 text-indigo-400 font-bold text-xs uppercase tracking-wider">
                 <MapPin size={13} />
-                <span>Branding Map Console</span>
+                <span>Selected Cutout Mapping</span>
               </div>
-              
-              <div className="flex items-center gap-2">
+
+              {selectedArea ? (
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center justify-between border-b border-white/5 pb-2 text-[11px] text-slate-400">
+                    <span>Active Box ID:</span>
+                    <span className="font-mono text-slate-200">{selectedArea.id.substring(0, 12)}...</span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider shrink-0">Map to Key:</label>
+                    <input
+                      type="text"
+                      maxLength={1}
+                      value={activeCharInput}
+                      onChange={(e) => handleSaveMapping(e.target.value)}
+                      placeholder="e.g. C"
+                      className="flex-1 bg-[#0a0a0d] border border-white/5 focus:border-indigo-500/40 rounded px-2.5 py-1.5 text-center text-sm font-mono font-bold text-white focus:outline-none uppercase"
+                    />
+                  </div>
+
+                  <button
+                    onClick={() => handleDeleteArea(selectedArea.id)}
+                    className="btn-secondary py-1.5 justify-center text-xs text-rose-400 border-rose-500/10 hover:bg-rose-500/5 hover:border-rose-500/25 mt-1"
+                  >
+                    <Trash2 size={13} />
+                    Delete Bounding Box
+                  </button>
+                </div>
+              ) : (
+                <div className="text-center py-6 text-slate-500 text-xs italic">
+                  Draw or select a bounding box on the logo canvas to assign a character mapping here.
+                </div>
+              )}
+            </div>
+
+            {/* Sequential Auto-Mapping console card */}
+            <div className="glass-panel p-4 bg-black/40 border-white/5 flex flex-col gap-3">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                <Sliders size={12} className="text-teal-400" />
+                <span>Auto-Map Crop Sequence</span>
+              </span>
+
+              <div className="flex flex-col gap-2.5">
                 <input
                   type="text"
                   value={autoMapSeq}
                   onChange={(e) => setAutoMapSeq(e.target.value.replace(/\s+/g, ''))}
                   placeholder="abcdefghijklmnopqrstuvwxyz"
-                  className="text-[10px] bg-[#0c0c0f] text-slate-300 border border-white/5 rounded px-2 py-1 w-44 font-mono focus:outline-none focus:border-indigo-500/40"
-                  title="List of characters to map to the detected segments in order"
+                  className="text-xs bg-[#0c0c0f] text-slate-300 border border-white/5 rounded-lg px-2.5 py-2 w-full font-mono focus:outline-none focus:border-indigo-500/40 text-center"
                 />
-                <button 
-                  onClick={handleAutoMap}
-                  disabled={segments.length === 0}
-                  className="text-[10px] bg-indigo-500/10 hover:bg-indigo-500/20 disabled:opacity-40 disabled:cursor-not-allowed text-indigo-300 font-semibold px-2.5 py-1 rounded border border-indigo-500/20 transition-all"
+                <button
+                  onClick={handleAutoMapCrops}
+                  disabled={cropAreas.length === 0}
+                  className="btn-teal py-2 text-xs w-full justify-center disabled:opacity-40 disabled:cursor-not-allowed font-bold"
                 >
-                  Auto-Map Sequence
+                  Sequential Auto-Map Crops
                 </button>
-                {mappedCharsCount > 0 && (
-                  <button 
-                    onClick={handleClearMappings}
-                    className="text-[10px] bg-rose-500/5 hover:bg-rose-500/10 text-rose-400 font-semibold px-2.5 py-1 rounded border border-rose-500/10 transition-all"
-                  >
-                    Clear Map
-                  </button>
+              </div>
+            </div>
+
+            {/* List of current crops */}
+            <div className="flex flex-col gap-2.5 flex-1">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                Current Bounding Boxes ({cropAreas.length})
+              </span>
+
+              <div className="flex flex-col gap-2 max-h-[220px] overflow-y-auto pr-1 border border-white/5 rounded-xl bg-black/20 p-2 shadow-inner">
+                {cropAreas.length === 0 ? (
+                  <span className="text-[10px] text-slate-600 italic text-center py-4">No crop areas drawn yet.</span>
+                ) : (
+                  cropAreas.map((area) => (
+                    <div
+                      key={area.id}
+                      onClick={() => {
+                        setActiveAreaId(area.id);
+                        setActiveCharInput(area.char);
+                      }}
+                      className={`flex items-center justify-between p-2 rounded-lg border cursor-pointer select-none transition-all ${
+                        area.id === activeAreaId
+                          ? 'border-indigo-500 bg-indigo-500/5 shadow-md'
+                          : 'border-white/5 hover:border-white/10 bg-black/40 hover:bg-black/60'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className="w-5 h-5 rounded bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-[10px] font-bold flex items-center justify-center font-mono">
+                          {area.char ? area.char : '?'}
+                        </div>
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          Box ({Math.floor(area.w)}×{Math.floor(area.h)})
+                        </span>
+                      </div>
+
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteArea(area.id);
+                        }}
+                        className="text-slate-600 hover:text-rose-400 p-1 rounded transition-colors"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  ))
                 )}
               </div>
             </div>
 
-            {/* Live horizontal mapped character indicators */}
-            <div className="flex flex-wrap gap-1.5 min-h-[30px] items-center py-1">
-              <span className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mr-1">Active Font DNA Map ({mappedCharsCount}):</span>
-              {mappedCharsCount === 0 ? (
-                <span className="text-[10px] text-slate-500 italic">No letters mapped yet. Map segments below!</span>
-              ) : (
-                Object.keys(mappings).sort().map(char => (
-                  <span 
-                    key={char} 
-                    className="inline-flex items-center gap-1 text-[10px] bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 px-2.5 py-0.5 rounded-full font-mono font-bold"
-                  >
-                    '{char}'
-                    <button 
-                      onClick={() => handleMap(char, 'unmapped')}
-                      className="text-rose-400 hover:text-rose-300 font-bold ml-0.5"
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))
-              )}
-            </div>
-
-            <div className="flex justify-between items-center border-t border-white/5 pt-3 mt-1">
-              <span className="text-[10px] text-slate-400 font-medium">
-                Mapped segments are vector-injected directly. Unmapped letters will be synthesized by AI matching this style.
-              </span>
-              
-              <button
-                onClick={handleFinalize}
-                disabled={!isFinalizable}
-                className="btn-primary py-2 px-5 text-xs font-bold gap-1.5"
-              >
-                <Check size={14} />
-                Vectorize & Compile Logo DNA
-                <ArrowRight size={12} />
-              </button>
-            </div>
-          </div>
-
-          {/* Sliced Segments Visual Grid with local inputs */}
-          <div className="flex flex-col gap-2.5">
-            <div className="flex justify-between items-center border-b border-white/5 pb-2">
-              <h4 className="text-sm font-semibold text-slate-200 flex items-center gap-1.5">
-                <Scissors size={14} className="text-indigo-400" />
-                <span>Isolated Logo/Graphic Segments ({segments.length})</span>
-              </h4>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3.5 max-h-[400px] overflow-y-auto pr-1">
-              {segments.map((s, idx) => {
-                // Find if this segment is already mapped
-                const mappedChar = Object.entries(mappings).find(([_, sId]) => sId === s.id)?.[0] || '';
-
-                return (
-                  <div
-                    key={s.id}
-                    className={`group relative rounded-xl border p-3 flex flex-col items-center justify-between gap-3 bg-[#0f0f12] overflow-hidden select-none transition-all duration-200 ${
-                      mappedChar
-                        ? 'border-indigo-500 bg-indigo-500/2 shadow-lg shadow-indigo-500/5'
-                        : 'border-white/5 hover:border-white/15'
-                    }`}
-                  >
-                    <div className="w-full aspect-square max-h-20 bg-black/40 rounded-lg p-1.5 flex items-center justify-center border border-white/5 relative">
-                      <img src={s.dataUrl} className="max-w-full max-h-full object-contain rounded" alt={`Block ${idx}`} />
-                      
-                      {/* Split/Scissors floating trigger */}
-                      <button
-                        onClick={() => openSplitModal(s)}
-                        className="absolute bottom-1 right-1 p-1 bg-black/85 hover:bg-indigo-600 border border-white/5 hover:border-indigo-400 text-slate-400 hover:text-white rounded shadow-md transition-all duration-150"
-                        title="Scissors: Draw split lines to separate touching letters!"
-                      >
-                        <Scissors size={10} />
-                      </button>
-                    </div>
-                    
-                    <div className="w-full flex flex-col gap-1 items-center">
-                      <span className="text-[9px] font-mono text-slate-600">
-                        Seg {idx + 1}
-                      </span>
-                      
-                      <div className="flex items-center gap-1.5 w-full mt-0.5">
-                        <span className="text-[9px] text-slate-500 font-semibold uppercase">Map:</span>
-                        <input
-                          type="text"
-                          maxLength={1}
-                          value={mappedChar}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            if (val) {
-                              handleMap(val, s.id);
-                            } else if (mappedChar) {
-                              handleMap(mappedChar, 'unmapped');
-                            }
-                          }}
-                          placeholder="char"
-                          className="w-full bg-[#050508] border border-white/5 hover:border-white/10 focus:border-indigo-500/40 rounded px-1.5 py-0.5 text-center text-xs font-mono font-bold text-white focus:outline-none"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Mapped badge */}
-                    {mappedChar && (
-                      <div className="absolute top-1.5 right-1.5 bg-indigo-600 text-white text-[10px] font-bold w-4.5 h-4.5 rounded-full border border-indigo-400 flex items-center justify-center shadow-md animate-scale-in">
-                        {mappedChar}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* --- INTERACTIVE PIXEL SCISSORS EDITOR MODAL --- */}
-      {splittingSegment && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-xs p-4">
-          <div className="glass-panel-glow w-full max-w-md p-5 relative overflow-hidden flex flex-col gap-4 bg-[#0a0a0d] border border-white/10 rounded-2xl">
+            {/* Synthesize Vector Font control button */}
             <button
-              onClick={() => setSplittingSegment(null)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-full border border-white/5 bg-white/2 hover:bg-white/5 transition-colors"
+              onClick={handleFinalize}
+              disabled={!isFinalizable}
+              className="btn-primary py-3 justify-center text-xs font-bold w-full mt-auto shadow-lg shadow-indigo-600/15"
             >
-              <X size={16} />
+              <Check size={14} />
+              Compile Logo DNA
+              <ArrowRight size={12} />
             </button>
-
-            <div>
-              <h3 className="text-md font-bold text-slate-200 flex items-center gap-1.5">
-                <Scissors size={16} className="text-indigo-400 animate-pulse" />
-                <span>Pixel Scissors: Cut Connected Letters</span>
-              </h3>
-              <p className="text-[11px] text-slate-400 mt-1 leading-normal">
-                Click and drag to draw thin black cut lines. Connect the top and bottom borders of the connecting stroke to split touching cursive or overlapping letters.
-              </p>
-            </div>
-
-            {/* Interactive Draw Canvas */}
-            <div className="relative aspect-square w-full max-w-[320px] mx-auto border border-white/10 rounded-xl bg-[#0f0f12] overflow-hidden shadow-inner">
-              <canvas
-                ref={modalCanvasRef}
-                width={350}
-                height={350}
-                onMouseDown={startScissorsDraw}
-                onMouseMove={drawScissorsCut}
-                onMouseUp={stopScissorsDraw}
-                onMouseLeave={stopScissorsDraw}
-                className="w-full h-full cursor-cell"
-              />
-            </div>
-
-            {/* Scissor settings */}
-            <div className="flex items-center justify-between bg-black/40 p-2.5 rounded-lg border border-white/5 text-xs">
-              <div className="flex items-center gap-1 text-slate-400 flex-1">
-                <Sliders size={12} className="text-indigo-400" />
-                <span>Scissor Width:</span>
-                <input
-                  type="range"
-                  min="3"
-                  max="20"
-                  value={brushSize}
-                  onChange={(e) => setBrushSize(parseInt(e.target.value))}
-                  className="w-24 accent-indigo-500 cursor-ew-resize h-1 bg-white/10 rounded-lg appearance-none ml-2"
-                />
-                <span className="font-mono font-bold text-slate-300 ml-1.5">{brushSize}px</span>
-              </div>
-
-              <button
-                onClick={() => {
-                  // Re-trigger Canvas render to undo edits
-                  setSplittingSegment({ ...splittingSegment });
-                }}
-                className="text-[10px] text-rose-400 hover:text-rose-300 font-semibold"
-              >
-                Reset Scissor Lines
-              </button>
-            </div>
-
-            {/* Modal Actions */}
-            <div className="flex gap-2.5 justify-end border-t border-white/5 pt-3">
-              <button
-                onClick={() => setSplittingSegment(null)}
-                className="btn-secondary py-1.5 px-3 text-xs"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleApplySplit}
-                className="btn-primary py-1.5 px-4 text-xs font-bold"
-              >
-                Apply Split Cut
-              </button>
-            </div>
           </div>
         </div>
       )}
