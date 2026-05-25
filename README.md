@@ -49,5 +49,28 @@ The compiled binaries will be outputted to the `dist_electron/` directory.
 
 ---
 
+## 🦀 Native Replatform Upgrade (Tauri Shell)
+
+For an ultra-lightweight, 100% native experience, the application supports **Tauri v2** as its primary desktop engine in the `feat/native-tauri` branch! 
+
+Rather than bundling Chromium, Tauri leverages the OS's native webview and compiles to a native **Rust** standalone binary of only ~3MB, consuming minimal system memory.
+
+### Local Development (Requires Rust installed locally)
+To run Tauri in dev mode with hot reload:
+```bash
+npm run tauri:dev
+```
+
+### ☁️ Cloud Compilation (Zero Local Setup)
+Since local native compilation requires installing Rust (`cargo` and `rustc`), VectorFlow is equipped with an automated **GitHub Actions CI/CD compiler** in `.github/workflows/build-tauri-desktop.yml`:
+1. Every push to the `main` or `feat/native-tauri` branch triggers cloud builders (Windows, macOS, and Linux runners).
+2. The runners compile the native standalone installers:
+   - **Windows**: Native `.exe` and `.msi` installers.
+   - **macOS**: Standalone `.app` and `.dmg` volumes.
+   - **Linux**: Standalone `.deb` packages and portable `AppImage` files.
+3. Once compiled, it automatically drafts a secure **GitHub Release** and uploads the native installers directly into the release, ready for download in under 10 minutes!
+
+---
+
 ## 🔒 BYOK Security Design
 VectorFlow operates **100% locally client-side**. Your Gemini or OpenAI API keys are stored securely *only* inside your system's browser local storage cache. Keys are never transmitted to any third-party backend servers; they are sent directly to official Google and OpenAI API endpoints.
