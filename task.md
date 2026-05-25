@@ -1,22 +1,19 @@
 # Tasks
 
-- `[x]` Implement Typography-Aware Coordinate Normalization in `SegmentMapper.tsx`
-  - `[x]` Write helper to classify character anatomic target guidelines (Cap-height, X-height, Baseline, Descender)
-  - `[x]` Scan canvas to detect exact bounding box of ink inside crops
-  - `[x]` Compute translation and uniform scaling to map ink onto target guidelines in 1000x1000 viewport
-- `[x]` Redesign Interactive Slicer & Mapping UI in `SegmentMapper.tsx` & `imageSegmenter.ts`
-  - `[x]` Add sliders in UI for **Binarization Contrast** and **Slicing Sensitivity** (merge threshold)
-  - `[x]` Re-run image component slicing instantly on slider adjustments
-  - `[x]` Render all cropped segments in a grid with custom character input fields below each crop
-  - `[x]` Create Auto-Map Sequence input (default `abcdefghijklmnopqrstuvwxyz`) and Auto-Map sequential assignment helper
-  - `[x]` Trace each mapped segment on a 1000x1000 normalized canvas using `imagetracerjs`
-- `[x]` Update AI Logo Style Analyzer and Batch Vector Prompts in `geminiApi.ts`
-  - `[x]` Refine style report schema and prompt to focus on branding DNA, geometry, stroke contrast, terminals, and decorative motifs
-  - `[x]` Rework vector generation prompt to emphasize morphing Roboto templates using the mapped logo letters as direct design anchors
-- `[x]` Adapt Dynamic Mapped Injection and AI Style Reference Pipeline in `App.tsx`
-  - `[x]` Inject *all* user-mapped characters dynamically using their ASCII/Unicode decimal char codes into `generatedGlyphs`
-  - `[x]` Pass the complete list of user-mapped characters and their normalized vector paths to `geminiApi.ts` as AI style references
-- `[x]` Verify Font Assembly & Sandbox Alignments with Logo Samples
-  - `[x]` Upload a brand logo image sheet, run Connective Slicer, tune merge threshold slider
-  - `[x]` Map characters, verify they are scaled and centered perfectly in the Glyphs Grid Inspector
-  - `[x]` Compile TTF font and test alignments, spacing, and baseline in Sandbox
+- `[x]` Implement Color Eyedropper Sampler in `imageSegmenter.ts` & `SegmentMapper.tsx`
+  - `[x]` Add optional `sampledColor: { r: number, g: number, b: number }` and `tolerance` parameters to `extractImageSegments`
+  - `[x]` Perform Euclidean color distance binarization if `sampledColor` is provided
+  - `[x]` Add interactive click handler to main logo preview image in `SegmentMapper.tsx` to extract RGB color
+  - `[x]` Add Color Tolerance slider in UI to control color-matching threshold dynamically
+- `[x]` Implement Interactive Canvas Scissors/Splitter Modal in `SegmentMapper.tsx`
+  - `[x]` Create a modal dialog when a segment is clicked for split editing
+  - `[x]` Render the cropped segment scaled-up on an interactive canvas
+  - `[x]` Support mouse/touch drawing in `#0f0f12` background color to erase/cut connecting lines between touching letters
+  - `[x]` Add slider to adjust scissor brush thickness
+  - `[x]` On split confirmation, re-run `extractImageSegments` on the modified crop segment canvas and replace the original segment with the newly sliced sub-segments
+- `[x]` Verify Scissors & Eyedropper Slicing with Touching Letters
+  - `[x]` Upload a connected script logo (like Coca-Cola)
+  - `[x]` Click on the red letter stroke to sample color and binarize
+  - `[x]` Open the Scissors Split Modal for connected letters and cut them apart
+  - `[x]` Confirm the segments are successfully broken into individual letter crops
+  - `[x]` Map characters, compile, and type in Sandbox

@@ -15,20 +15,20 @@ An elegant, premium web application that allows users to convert a brand logo, s
 > The application uses a Bring Your Own Key (BYOK) model. The API keys (Gemini / OpenAI) are stored **only** locally in the user's browser `localStorage`. No keys are sent to any external server other than the official AI endpoints.
 
 > [!IMPORTANT]
-> **Logo-to-Font Design Pipeline & Pivots**
-> Rather than standard handwriting, the application is optimized for **Logo/Graphic Wordmarks**:
-> 1. **Logo-Aware Binarization**: Logos often use vibrant color schemes, gradient fills, or dark-on-light configurations. We will implement a dynamic binarization algorithm that automatically extracts high-contrast vector boundaries regardless of logo coloring.
-> 2. **Adjustable Extraction Sensitivity**: Logos often have closely spaced or touching characters. We will provide an interactive **Merge Distance** and **Binarization Threshold** slider in the UI, allowing users to tune the slicing engine in real-time to perfectly isolate logo glyphs.
-> 3. **Branding Style DNA Extraction**: The AI analysis prompts are rewritten to focus on **brand identity design principles**:
->    - Stroke weight contrast, geometric/optical ratios.
->    - Terminal treatments (serifs, flared, sheared, rounded, blocked).
->    - Internal counters (squarish, circular, triangular).
->    - Specific branding motifs (inline cuts, stencil breaks, futuristic slashes).
-> 4. **Typographic Guideline Alignment**: Mapped logo characters are automatically normalized into a 1000x1000 coordinate grid. They sit perfectly centered on baseline (Y=800) and scale to cap-height (Y=200).
+> **Touching & Script Letters Solution (The Coca-Cola Challenge)**
+> Logo lettering often touches, overlaps, or uses connected cursive scripts. To solve this, we are implementing two advanced features:
+> 1. **Interactive Pixel Scissor Editor (Cutter Modal)**:
+>    - Clicking on any crop segment opens an **Interactive Split Editor** modal.
+>    - Draws the segment scaled up on a canvas. The user can draw with a **Scissors Tool** (erasing connecting strokes with background color ink) to physically cut the ligature between touching letters.
+>    - Clicking "Apply Split" re-runs the connected component slicer *specifically on this cropped segment canvas*, instantly splitting the single blob into multiple perfectly isolated letter segments (e.g. splitting "oca" into "o", "c", and "a").
+> 2. **Logo Color Sampler (Eyedropper)**:
+>    - Users can click anywhere on the uploaded logo image preview to **sample the target letter color**!
+>    - The binarization algorithm will instantly switch to color-distance mode, checking the Euclidean distance of each pixel to the sampled color.
+>    - Includes a **Color Tolerance** slider in the UI to dynamically adjust the binarization, perfectly isolating letters from multi-colored, complex, or noisy backgrounds!
 
 > [!NOTE]
-> **Dynamic Grid Injection**
-> Mapped logo glyphs are traced with `imagetracerjs` and injected directly into the font's character map for 100% exact vector reproduction. For any missing letters, the AI synthesizes them by morphing anatomical template skeletons (Roboto-Regular) using the extracted branding rules and the vector shapes of the mapped logo letters as direct references.
+> **Typography-Aware Coordinate Normalization**
+> Mapped logo characters are automatically normalized into a 1000x1000 coordinate grid. They sit perfectly centered on baseline (Y=800) and scale to cap-height (Y=200), standard lowercase (Y=450), or descender (Y=950) spaces.
 
 ---
 
@@ -48,13 +48,13 @@ FontCreator/
 │   ├── components/
 │   │   ├── ApiKeyModal.tsx (BYOK modal)
 │   │   ├── DrawingCanvas.tsx (Supports drawing stylized glyphs or uploading logos)
-│   │   ├── SegmentMapper.tsx (Interactive logo letter slicer & character mapper)
+│   │   ├── SegmentMapper.tsx (Interactive logo letter slicer, color sampler & scissors editor)
 │   │   ├── UnicodeSelector.tsx (Unicode block picker)
 │   │   ├── GlyphGrid.tsx (Displays vector matrix & detailed SVG coordinate inspector)
 │   │   └── FontSandbox.tsx (Interactive typing testing arena & TTF export)
 │   ├── utils/
 │   │   ├── geminiApi.ts (Logo-aware style extraction & vector synthesis)
-│   │   ├── imageSegmenter.ts (Binarization & adjustable BFS connected components)
+│   │   ├── imageSegmenter.ts (Binarization, Color-distance thresholding & BFS)
 │   │   ├── svgParser.ts (SVG tokenizer, Y-coordinate flip, curve smoothing)
 │   │   └── unicodeBlocks.ts (Unicode blocks ranges & definitions)
 ```
@@ -63,29 +63,29 @@ FontCreator/
 
 ## Component Specifications
 
-### 1. Logo Slicer & Mapper (`SegmentMapper.tsx` & `imageSegmenter.ts`)
-- Isolates glyphs from the uploaded logo image using BFS.
-- **New Feature**: Adds visual sliders for **Slicing Sensitivity** (merge threshold) and **Binarization Contrast** to instantly re-slice complex logos.
-- Display crop segments in a grid. Below each segment, a text input lets the user map it to any character (e.g. if the logo has "G", "o", "o", "g", "l", "e", they map those crops to the respective letters).
-- Includes **Auto-Map Sequence** to automatically map logo letters in horizontal reading order.
-- Applies **Typography-Aware Normalization** to scale and center traced paths onto the 1000x1000 baseline.
+### 1. Logo Slicer, Eyedropper & Scissors (`SegmentMapper.tsx` & `imageSegmenter.ts`)
+- **Color Eyedropper**: Renders a preview of the main uploaded logo. Clicking on it extracts the `(R, G, B)` value. Sets the binarizer to check color distance instead of raw brightness.
+- **Slicing Controls**:
+  - **Color Tolerance / Contrast Slider**: Adjusts contrast or color tolerance dynamically.
+  - **Slicing Sensitivity Slider**: Sets BFS merge distance threshold.
+- **Scissors Editor (Split Modal)**:
+  - Renders a modal canvas for cutting connected components.
+  - Re-slices the segment locally on edit completion and injects the new sub-segments into the segments list.
+- Mapped letters are traced on a 1000x1000 normalized canvas.
 
 ### 2. Branding AI Style Report & Generation (`geminiApi.ts`)
-- Refines `analyzeFontStyle` to extract branding-focused stylistic features from the logo image.
-- Refines `generateGlyphBatch` to synthesize unmapped letters. The prompt instructs the AI to use the exact vector paths of the mapped logo letters as the primary design foundation, copying their stroke thickness, curves, terminal treatments, and decorative cuts to the new letters.
+- Generates unmapped letters by morphing Roboto templates using the exact vector paths of the mapped logo letters as direct brand style references.
 
 ### 3. Font Compiler & Spacing Engine (`svgParser.ts`)
 - Flipped Y-coordinates: `fontY = 800 - svgY` for opentype compatibility.
-- Estimates advance widths dynamically using character bounding boxes to avoid overlapping text in sandboxes.
-- Includes a Bezier smoothing filter to ensure compiled vector paths look clean.
+- Estimates advance widths dynamically using character bounding boxes.
 
 ---
 
 ## Verification Plan
 
 ### Manual Verification
-1. **Logo Upload & Real-Time Tuning**: Upload a color logo image. Adjust the **Binarization Contrast** and **Slicing Sensitivity** sliders. Verify that the character crops instantly update and clearly isolate individual stylized letters.
-2. **Auto-Mapping Logo Text**: Upload a logo image with letters in order, click Auto-Map, and check if assignments map correctly.
-3. **Typography Normalization**: Open a mapped logo letter in the Inspector. Verify that it sits perfectly centered and spans exactly from baseline to cap-height without shifting.
-4. **Sandbox Branding Test**: Type word combinations in the Sandbox and check if AI-generated letters match the logo's style (e.g. geometric consistency, terminal finishes).
-5. **Install TTF**: Export the `.ttf` font, install it on Windows, and verify it registers as a high-fidelity system font.
+1. **Color Eyedropper Test**: Upload a color logo. Click on a colored letter. Verify that the crops instantly update to isolate only that color.
+2. **Interactive Scissors Test**: Click on a combined cursive segment (e.g. connected "lo"). Draw a thin cut between "l" and "o". Click Apply Split and confirm it divides into two independent segments.
+3. **Auto-Mapping**: Click Auto-Map and check sequential assignments.
+4. **Perfect Alignment Sandbox**: Compile the font in the Sandbox tab and type. Confirm that all directly traced and AI-generated glyphs align perfectly on the baseline.

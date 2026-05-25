@@ -23,7 +23,9 @@ export interface ImageSegment {
   minSize = 12,
   padding = 15,
   mergeThreshold = 25,
-  customThreshold?: number
+  customThreshold?: number,
+  sampledColor?: { r: number; g: number; b: number },
+  colorTolerance = 45
 ): Promise<ImageSegment[]> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -87,14 +89,25 @@ export interface ImageSegment {
           const r = data[idx];
           const g = data[idx+1];
           const b = data[idx+2];
-          const brightness = (r + g + b) / 3;
           
-          if (isLightBg) {
-            // Light background: dark pixels are ink
-            binaryGrid[i] = brightness < inkThreshold ? 1 : 0;
+          if (sampledColor) {
+            // Euclidean color distance binarization
+            const dist = Math.sqrt(
+              Math.pow(r - sampledColor.r, 2) +
+              Math.pow(g - sampledColor.g, 2) +
+              Math.pow(b - sampledColor.b, 2)
+            );
+            binaryGrid[i] = dist < colorTolerance ? 1 : 0;
           } else {
-            // Dark background: light pixels are ink
-            binaryGrid[i] = brightness > inkThreshold ? 1 : 0;
+            // Default brightness binarization
+            const brightness = (r + g + b) / 3;
+            if (isLightBg) {
+              // Light background: dark pixels are ink
+              binaryGrid[i] = brightness < inkThreshold ? 1 : 0;
+            } else {
+              // Dark background: light pixels are ink
+              binaryGrid[i] = brightness > inkThreshold ? 1 : 0;
+            }
           }
         }
 
