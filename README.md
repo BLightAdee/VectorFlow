@@ -28,20 +28,6 @@ Using a client-side **Bring Your Own Key (BYOK)** security design, VectorFlow ex
 
 ## 🛠️ Installation & Setup
 
-Ensure you have **Node.js** (v18+) installed.
-
-### 1. Install Dependencies
-```bash
-npm install
-```
-
-### 2. Run the App in Development Mode (Vite Dev Server + Electron shell)
-```bash
-npm run electron:dev
-```
-
-### 3. Build & Package Standalone Desktop Installers
-
 ### Local Development (Requires Rust installed locally)
 To run Tauri in dev mode with hot reload:
 ```bash
